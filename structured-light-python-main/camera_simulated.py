@@ -17,15 +17,21 @@ class CameraSimulated(Camera):
     @staticmethod
     def get_available_cameras(cameras_num_to_find:int=2) -> list[Camera]:
         cameras = []
-        
-        for _ in range(cameras_num_to_find):
-            cameras.append(CameraSimulated())
-
+        for i in range(cameras_num_to_find):
+            camera = CameraSimulated()
+            camera._cam_id = i
+            cameras.append(camera)
         return cameras
 
     def get_image(self) -> np.array:
         if self.projector is not None:
-            img = self._projector.corrected_pattern
+            np.random.seed(42)  # Fixed seed for repeatable noise across runs
+            img = self._projector.corrected_pattern.copy()
+            # Low noise for flatness (tune: 0.001 → 0 for zero-noise perfect plane)
+            noise = np.random.normal(0, 0.001, img.shape)
+            img = np.clip(img + noise * 255, 0, 255).astype(np.uint8)
+            if self._cam_id == 1:  # Small shift for minimal disparity/flat Z
+                img = np.roll(img, 25, axis=1)  # 25 pixel (tune: 0 for identical = NaN risk)
             return img
         else:
             raise ValueError()

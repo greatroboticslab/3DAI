@@ -29,7 +29,7 @@ PROJECTOR_GAMMA_C = 0
 CAMERAS_COUNT = 2
 
 # Type of cameras used in measurement
-CAMERA_TYPE = 'baumer'
+CAMERA_TYPE = 'simulated'
 
 # Cameras parameters default values, the current values are loaded from the calibration file
 CAMERA_EXPOSURE = [20000, 20000]
@@ -59,7 +59,7 @@ MEASUREMENT_CAPTURE_DELAY = 300  # ms
 CONFIG_FILENAME = r"./config.json"
 
 # Use multiprocessing to increase speed of processing
-USE_MULTIPROCESSING = False
+USE_MULTIPROCESSING = True
 
 # Number of Pools to use in parallel processing
 POOLS_NUMBER = 5

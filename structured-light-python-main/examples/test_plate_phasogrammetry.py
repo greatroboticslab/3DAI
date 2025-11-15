@@ -14,6 +14,9 @@ from fpp_structures import FPPMeasurement, PhaseShiftingAlgorithm
 from processing import calculate_phase_for_fppmeasurement, create_polygon, process_fppmeasurement_with_phasogrammetry, get_phase_field_ROI, get_phase_field_LUT, triangulate_points
 from utils import get_images_from_config, load_fpp_measurements
 
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)  # Suppress fsolve/NumPy warnings for clean output
+
 
 def fit_to_plane(x, y, z):
     # From https://math.stackexchange.com/questions/99299/best-fitting-plane-given-a-set-of-points
@@ -102,8 +105,15 @@ def process_with_phasogrammetry(measurement: FPPMeasurement):
 
     # Process FPPMeasurements with phasogrammetry approach
     print('Calculate 2D corresponding points with phasogrammetry approach...')
-    points_2d_1, points_2d_2 = process_fppmeasurement_with_phasogrammetry(measurement, 5, 5, LUT)
-    print(f'Found {points_2d_1.shape[0]} corresponding points')
+    result = process_fppmeasurement_with_phasogrammetry(measurement, 5, 5, LUT)
+    print(f"Phasogrammetry returned a value of type {type(result)} with length {len(result)}")  # Debug
+    print(f"Shapes of returned items: {[r.shape if hasattr(r, 'shape') else 'not array' for r in result]}")  # More debug
+    if len(result) != 2:
+        print("Unexpected return length - using first two items")
+        points_2d_1 = result[0]
+        points_2d_2 = result[1]
+    else:
+        points_2d_1, points_2d_2 = result
     print('Done')
 
     print('\nCalculate 3D points with triangulation...')
@@ -120,8 +130,8 @@ def process_with_phasogrammetry(measurement: FPPMeasurement):
     print(f'Fitting deviation max = {np.max(distance_to_plane):.4f} mm')
     print(f'Fitting deviation std = {np.std(distance_to_plane):.4f} mm')
 
-    # plt.hist(distance_to_plane, 30)
-    # plt.show()
+    plt.hist(distance_to_plane, 30)
+    plt.show()
 
     # Filter outliers by reprojection error
     reproj_err_threshold = 1.0 # pixel

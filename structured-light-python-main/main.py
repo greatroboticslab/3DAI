@@ -44,6 +44,8 @@ def initialize_cameras(
     '''
     if camera_type == 'web':
         cameras = CameraWeb.get_available_cameras(cam_to_found_number)
+    elif camera_type == 'cognex':
+        cameras = CameraWeb.get_available_cameras(cam_to_found_number)
     elif camera_type == 'baumer':
         cameras = CameraBaumer.get_available_cameras(cam_to_found_number, cameras_serial_numbers)
     elif camera_type == 'simulated':
