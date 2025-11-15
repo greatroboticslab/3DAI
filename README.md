@@ -7,7 +7,7 @@ To further test the code without hardware, a test setup using two simulated came
 
 It was discovered that even with ideal images the scripts would generate very few points with large holes missing. Turning on multicore processing seemed to eliminate that issue. The exact cause was not determined, but it seems likely it is due to either a processing time or iteration limit built into the code or libraries.
 
-![App Screenshot]('Testing Results/PointCloudSimulation.png')
+!['Testing Results/PointCloudSimulation.png'](https://github.com/greatroboticslab/3DAI/blob/main/Testing%20Results/PointCloudSimulation.png)
  
 Additions:
 Added a camera_cognex module for connecting to older cognex cameras to download files through FTP and trigger via Telnet. This remains untested.
