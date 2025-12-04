@@ -15,14 +15,14 @@ Added a camera_cognex module for connecting to older cognex cameras to download 
 
 # 3DAI
 Running pykinect2 requirments on Windows 10
-python version 3.9.13 # setup an environment
-pip install comtypes==1.4.13
-pip install numpy
-pip install pykinect2
-Manually patch pykinect2
-{Enviroment}\Lib\site-packages\pykinect2\PyKinectV2.py
-    Change line 2216 from: assert sizeof(tagSTATSTG) == 72, sizeof(tagSTATSTG)
-    to: assert sizeof(tagSTATSTG) >= 72, sizeof(tagSTATSTG)
-    Comment out line 2863: from comtypes import _check_version; _check_version('')
-{Enviroment}\Lib\site-packages\pykinect2\PyKinectRuntime.py
-    Replace all time.clock() calls with time.perf_counter()
+1. python version 3.9.13 # setup an environment
+2. pip install comtypes==1.4.13
+3. pip install numpy
+4. pip install pykinect2
+5. Manually patch pykinect2
+6. {Enviroment}\Lib\site-packages\pykinect2\PyKinectV2.py
+7.  Change line 2216 from: assert sizeof(tagSTATSTG) == 72, sizeof(tagSTATSTG)
+8.  to: assert sizeof(tagSTATSTG) >= 72, sizeof(tagSTATSTG)
+9.  Comment out line 2863: from comtypes import _check_version; _check_version('')
+10. {Enviroment}\Lib\site-packages\pykinect2\PyKinectRuntime.py
+11. Replace all time.clock() calls with time.perf_counter()
