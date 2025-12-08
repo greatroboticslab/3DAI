@@ -63,37 +63,49 @@ def project_image(img_np_uint8):
     cv2.imshow(win, img_np_uint8)
     cv2.waitKey(100)
 
-# ------------------- Generate All Patterns Once -------------------
+# ------------------- Generate All Patterns Once (FIXED) -------------------
 print("Generating patterns using fpp_tools.generate_fringe_patterns() ...")
 
-# Black & White
-black = np.zeros(PROJECTOR_RES[::-1], dtype=np.uint8)        # (H, W)
+# Black & White (note: shape is (height, width))
+black = np.zeros(PROJECTOR_RES[::-1], dtype=np.uint8)   # (800, 1280)
 white = np.full(PROJECTOR_RES[::-1], 255, dtype=np.uint8)
 cv2.imwrite(f"{PATTERN_DIR}/black.png", black)
 cv2.imwrite(f"{PATTERN_DIR}/white.png", white)
 
-# 4-step sinusoidal fringes
+# 4-step sinusoidal fringes — IMPORTANT: filebase WITHOUT trailing underscore or .png
 phases_rad = np.deg2rad(PHASES_DEG)
 fpp.generate_fringe_patterns(
-    Nx=PROJECTOR_RES[1],      # height
-    Ny=PROJECTOR_RES[0],      # width
+    Nx=PROJECTOR_RES[1],      # height = 800
+    Ny=PROJECTOR_RES[0],      # width  = 1280
     phases=phases_rad,
     num_fringes=NUM_FRINGES,
     gamma=1.0,
-    filebase=f"{PATTERN_DIR}/fringe_"
+    filebase=f"{PATTERN_DIR}/fringe_"   # ← this creates fringe_000.png, fringe_090.png, etc.
 )
 
 # Gray levels
 for i, level in enumerate(np.linspace(20, 235, GRAY_LEVELS)):
     gray = np.full(PROJECTOR_RES[::-1], int(level), dtype=np.uint8)
-    cv2.imwrite(f"{PATTERN_DIR}/gray_{i:02d}.png", gray)
+    cv2.imwrite(f"{PATTERN_DIR}/gray_{i:02d}.png", gray)   # ← 02d = two digits
 
-# Smart pattern list — always correct!
-fringe_files = sorted([f for f in os.listdir(PATTERN_DIR) if f.startswith("fringe_") and f.endswith(".png")])
-gray_files   = sorted([f for f in os.listdir(PATTERN_DIR) if f.startswith("gray_") and f.endswith(".png")])
+# ------------------- AUTO-BUILD CORRECT PATTERN LIST (NO MORE MISTAKES) -------------------
+import os
+all_files = os.listdir(PATTERN_DIR)
 
-patterns = ["black", "white"] + fringe_files + gray_files
-print(f"Generated and will project {len(patterns)} patterns:", patterns)
+patterns = ["black.png", "white.png"]
+
+# Add only the actual fringe files that exist
+fringe_files = sorted([f for f in all_files if f.startswith("fringe_") and f.endswith(".png")])
+patterns += fringe_files
+
+# Add gray files
+gray_files = sorted([f for f in all_files if f.startswith("gray_") and f.endswith(".png")])
+patterns += gray_files
+
+print(f"Will project {len(patterns)} patterns in this order:")
+for p in patterns:
+    print("   ", p)
+print()
 
 # ========================= MAIN CALIBRATION LOOP =========================
 print("=== START CALIBRATION ===\n")
