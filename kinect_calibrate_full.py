@@ -65,33 +65,35 @@ def project_image(img_np_uint8):
 
 # ------------------- Generate All Patterns Once -------------------
 print("Generating patterns using fpp_tools.generate_fringe_patterns() ...")
+
 # Black & White
-black = np.zeros((PROJECTOR_RES[1], PROJECTOR_RES[0]), dtype=np.uint8)
-white = np.full((PROJECTOR_RES[1], PROJECTOR_RES[0]), 255, dtype=np.uint8)
+black = np.zeros(PROJECTOR_RES[::-1], dtype=np.uint8)        # (H, W)
+white = np.full(PROJECTOR_RES[::-1], 255, dtype=np.uint8)
 cv2.imwrite(f"{PATTERN_DIR}/black.png", black)
 cv2.imwrite(f"{PATTERN_DIR}/white.png", white)
 
 # 4-step sinusoidal fringes
 phases_rad = np.deg2rad(PHASES_DEG)
 fpp.generate_fringe_patterns(
-    Nx=PROJECTOR_RES[1],
-    Ny=PROJECTOR_RES[0],
+    Nx=PROJECTOR_RES[1],      # height
+    Ny=PROJECTOR_RES[0],      # width
     phases=phases_rad,
     num_fringes=NUM_FRINGES,
-    # vertical fringes
     gamma=1.0,
     filebase=f"{PATTERN_DIR}/fringe_"
 )
 
-# Optional: uniform gray levels for better gamma estimation
+# Gray levels
 for i, level in enumerate(np.linspace(20, 235, GRAY_LEVELS)):
-    gray = np.full((PROJECTOR_RES[1], PROJECTOR_RES[0]), int(level), dtype=np.uint8)
+    gray = np.full(PROJECTOR_RES[::-1], int(level), dtype=np.uint8)
     cv2.imwrite(f"{PATTERN_DIR}/gray_{i:02d}.png", gray)
 
-print(f"Generated {4 + 2 + GRAY_LEVELS} patterns in '{PATTERN_DIR}/'\n")
+# Smart pattern list — always correct!
+fringe_files = sorted([f for f in os.listdir(PATTERN_DIR) if f.startswith("fringe_") and f.endswith(".png")])
+gray_files   = sorted([f for f in os.listdir(PATTERN_DIR) if f.startswith("gray_") and f.endswith(".png")])
 
-# ------------------- Pattern list (same order every time) -------------------
-patterns = ["black", "white"] + [f"fringe_{i}" for i in range(4)] + [f"gray_{i:02d}" for i in range(GRAY_LEVELS)]
+patterns = ["black", "white"] + fringe_files + gray_files
+print(f"Generated and will project {len(patterns)} patterns:", patterns)
 
 # ========================= MAIN CALIBRATION LOOP =========================
 print("=== START CALIBRATION ===\n")
