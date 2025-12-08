@@ -3,6 +3,7 @@
 from numpy import *
 from numpy.random import default_rng
 from numpy.linalg import inv
+from imageio import imread, imsave
 
 ## ==============================================================================================
 def generate_fringe_patterns(Nx, Ny, phases, num_fringes=10, gamma=1.0, filebase=''):

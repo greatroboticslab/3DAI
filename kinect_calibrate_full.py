@@ -14,7 +14,7 @@ from glob import glob
 from scipy.signal import medfilt2d
 from pykinect2.PyKinectV2 import *
 from pykinect2 import PyKinectRuntime
-import fpp_tools.fpp_tools as fpp
+import fpp_tools as fpp
 
 # ========================== CONFIG ==========================
 PROJECTOR_RES = (1280, 800)           # Your projector resolution
