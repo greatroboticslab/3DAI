@@ -45,13 +45,13 @@ def capture_kinect(prefix: str):
     while True:
         if kinect.has_new_color_frame():
             frame = kinect.get_last_color_frame()
-            frame = frame.reshape((1080, 1920, 4))[:, :, :3]          # BGRA → BGR
-            frame = frame.astype(np.uint8)
+            frame = frame.reshape((1080, 1920, 4))[:, :, :3].astype(np.uint8)
             frame_roi = frame[ROI_Y, ROI_X]
-            path = f"{CAPTURE_DIR}/cap_{prefix}.jpg"
-            cv2.imwrite(path, frame_roi)
+            # Temporary unique name in root capture dir
+            temp_path = f"{CAPTURE_DIR}/cap_temp_{int(time.time()*1000)}.jpg"
+            cv2.imwrite(temp_path, frame_roi)
             print(" done")
-            return path, frame_roi
+            return temp_path, frame_roi
         time.sleep(0.01)
 
 # ------------------- Projector -------------------
@@ -103,26 +103,39 @@ input()
 for idx, h_mm in enumerate(KNOWN_THICKNESSES_MM):
     print(f"\n=== STEP {idx+1}/{len(KNOWN_THICKNESSES_MM)} : {h_mm:.1f} mm ===")
     if h_mm > 0:
-        input(f"   → Place {h_mm:.1f} mm gauge block / plate → press ENTER")
+        input(f"   → Place {h_mm:.1f} mm plate → press ENTER when ready...")
     
     height_dir = f"{CAPTURE_DIR}/h{h_mm:05.1f}mm"
     os.makedirs(height_dir, exist_ok=True)
+    
+    # <<< SAFETY: Remove old captures for this height >>>
+    for old_file in glob(f"{height_dir}/*.jpg"):
+        try:
+            os.remove(old_file)
+        except:
+            pass
+    print(f"   Cleared old images in {height_dir}")
 
     for pat in patterns:
         img_path = f"{PATTERN_DIR}/{pat}.png"
         img = cv2.imread(img_path)
+        if img is None:
+            raise FileNotFoundError(f"Pattern not found: {img_path}")
+        
         project_image(img)
-        time.sleep(0.9)  # let everything settle
-        path, live = capture_kinect(f"h{h_mm:05.1f}mm_{pat}")
-        # Move into height-specific folder
-        new_path = os.path.join(height_dir, os.path.basename(path))
-        os.rename(path, new_path)
-
-        # Optional live preview
-        cv2.imshow("Kinect Live (cropped)", cv2.resize(live, (900, 560)))
+        time.sleep(1.0)  # stable projection
+        
+        # Simple clean name — safe because we deleted old ones
+        clean_name = f"{pat}.jpg" 
+        final_path = os.path.join(height_dir, clean_name)
+        
+        _, live_img = capture_kinect(f"h{h_mm:05.1f}mm_{pat}")
+        os.rename(glob(f"{CAPTURE_DIR}/cap_*.jpg")[0], final_path)  # move the temp file
+        
+        cv2.imshow("Kinect Live", cv2.resize(live_img, (900, 560)))
         cv2.waitKey(50)
 
-    print(f"Finished {h_mm:.1f} mm")
+    print(f"Finished {h_mm:.1f} mm → {len(patterns)} images saved cleanly")
 
 cv2.destroyAllWindows()
 kinect.close()
