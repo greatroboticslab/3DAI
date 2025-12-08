@@ -129,7 +129,7 @@ for idx, h_mm in enumerate(KNOWN_THICKNESSES_MM):
     print(f"   Cleared old images in {height_dir}")
 
     for pat in patterns:
-        img_path = f"{PATTERN_DIR}/{pat}.png"
+        img_path = f"{PATTERN_DIR}/{pat}"
         img = cv2.imread(img_path)
         if img is None:
             raise FileNotFoundError(f"Pattern not found: {img_path}")
