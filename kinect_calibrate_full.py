@@ -164,15 +164,15 @@ for h_dir in sorted(glob(f"{CAPTURE_DIR}/h*mm")):
     print(f"→ Processing {os.path.basename(h_dir)}")
 
     # Load only the 6 essential images: black, white, fringe_0..3
-    fringe_files = [f for f in sorted(glob(f"{h_dir}/*.jpg")) if "fringe_" in f]  # 4
-    bw_files = [f for f in sorted(glob(f"{h_dir}/*.jpg")) if "black" in f or "white" in f]
+    fringe_files = [f for f in sorted(glob(f"{h_dir}/*.png")) if "fringe_" in f]  # 4
+    bw_files = [f for f in sorted(glob(f"{h_dir}/*.png")) if "black" in f or "white" in f]
     files = bw_files + fringe_files
     stack = [cv2.imread(f, cv2.IMREAD_GRAYSCALE).astype(np.float32) for f in files]
     imagestack = np.dstack(stack)
 
-    # Best method in the repo: order=2 → automatically compensates projector gamma!
-    phi_img, amp_img, bias_img, gamma_img, deltas = fpp.estimate_deltas_and_phi_lsq(
-        imagestack, order=2, eps=1e-4
+    # Use order=1 to avoid singularity (gamma compensation disabled)
+    phi_img, amp_img, bias_img, deltas = fpp.estimate_deltas_and_phi_lsq(
+        imagestack, order=1, eps=1e-4
     )
 
     # Unwrap + remove tilt plane
@@ -230,11 +230,17 @@ plt.legend()
 plt.grid(True, alpha=0.3)
 plt.show()
 
-# Save calibration
+# Save calibration — Windows-safe version (no Greek letters in header)
 header = ("Calibration coefficients [a b c] for:\n"
-          "height_mm = a*(Δφ)² + b*Δφ + c\n"
+          "height_mm = a*(dphi)^2 + b*dphi + c\n"
+          "where dphi = phase difference in radians (object phase - reference phase)\n"
           f"Generated on {time.strftime('%Y-%m-%d %H:%M')}")
-np.savetxt("calibration_kinect.txt", poly_coeffs, header=header, fmt="%.10f")
+
+np.savetxt("calibration_kinect.txt", poly_coeffs,
+           header=header,
+           fmt="%.10f",
+           encoding="utf-8")   # forces UTF-8 → works everywhere
+
 print("\nCalibration saved as 'calibration_kinect.txt'")
 print("Use it later with:")
 print("   coeffs = np.loadtxt('calibration_kinect.txt')")
