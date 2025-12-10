@@ -25,7 +25,7 @@ os.makedirs(CAPTURE_DIR, exist_ok=True)
 os.makedirs(PATTERN_DIR, exist_ok=True)
 
 # === CALIBRATION PLATES (in mm) ===
-KNOWN_THICKNESSES_MM = [0.0, 5.0, 10.0, 15.0, 20.0, 30.0]   # ← change to your actual gauges
+KNOWN_THICKNESSES_MM = [0.0, 2.0, 4.0, 6.0, 8.0, 20.0]   # ← change to your actual gauges
 
 # Kinect color ROI — adjust once by eye (where the projector pattern fully appears)
 ROI_Y, ROI_X = slice(100, 980), slice(300, 1620)   # 880×1320 px typical safe zone
