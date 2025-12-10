@@ -25,7 +25,7 @@ os.makedirs(CAPTURE_DIR, exist_ok=True)
 os.makedirs(PATTERN_DIR, exist_ok=True)
 
 # === CALIBRATION PLATES (in mm) ===
-KNOWN_THICKNESSES_MM = [0.0, 2.0, 4.0, 6.0, 8.0, 20.0]   # ← change to your actual gauges
+KNOWN_THICKNESSES_MM = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]   # ← change to your actual gauges
 
 # Kinect color ROI — adjust once by eye (where the projector pattern fully appears)
 ROI_Y, ROI_X = slice(100, 980), slice(300, 1620)   # 880×1320 px typical safe zone
@@ -121,7 +121,7 @@ for idx, h_mm in enumerate(KNOWN_THICKNESSES_MM):
     os.makedirs(height_dir, exist_ok=True)
     
     # <<< SAFETY: Remove old captures for this height >>>
-    for old_file in glob(f"{height_dir}/*.jpg"):
+    for old_file in glob(f"{height_dir}/*.png"):
         try:
             os.remove(old_file)
         except:
@@ -138,13 +138,13 @@ for idx, h_mm in enumerate(KNOWN_THICKNESSES_MM):
         time.sleep(1.0)  # stable projection
         
         # Simple clean name — safe because we deleted old ones
-        clean_name = f"{pat}.jpg" 
+        clean_name = f"{pat}" 
         final_path = os.path.join(height_dir, clean_name)
         
         _, live_img = capture_kinect(f"h{h_mm:05.1f}mm_{pat}")
         os.rename(glob(f"{CAPTURE_DIR}/cap_*.jpg")[0], final_path)  # move the temp file
         
-        cv2.imshow("Kinect Live", cv2.resize(live_img, (900, 560)))
+        # cv2.imshow("Kinect Live", cv2.resize(live_img, (900, 560)))
         cv2.waitKey(50)
 
     print(f"Finished {h_mm:.1f} mm → {len(patterns)} images saved cleanly")
