@@ -19,8 +19,8 @@ for h_dir in sorted(glob(f"{config.CAPTURE_DIR}/h*mm")):
     h_val = float(os.path.basename(h_dir)[1:-2].replace("mm", ""))
     print(f"→ Processing {os.path.basename(h_dir)}")
 
-    # Load only the 6 essential images: black, white, fringe_0..3
-    files = [f for f in sorted(glob(f"{h_dir}/*.png")) if "fringe_" in f]  # 4
+    # Load only the fringe_0..3 files
+    files = [f for f in sorted(glob(f"{h_dir}/*.png")) if "fringe_" in f] 
     stack = [cv2.imread(f, cv2.IMREAD_GRAYSCALE).astype(np.float32) for f in files]
     imagestack = np.dstack(stack)
 
