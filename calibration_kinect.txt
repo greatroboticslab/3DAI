@@ -1,0 +1,7 @@
+# Calibration coefficients [a b c] for:
+# height_mm = a*(dphi)^2 + b*dphi + c
+# where dphi = phase difference in radians (object phase - reference phase)
+# Generated on 2025-12-15 10:35
+-59.5014942194
+-23.0913629555
+5.8102917105

@@ -1,62 +1,13 @@
-# kinect_calibrate_full.py
-# Complete Kinect v2 + Projector calibration pipeline
-# → Generates patterns on-the-fly using fpp_tools.generate_fringe_patterns()
-# → Captures with pykinect2
-# → Computes phase with gamma compensation
-# → Calibrates Δφ → real height (mm) using known flat plates
-
+import os
+import config
+from glob import glob
 import cv2
 import numpy as np
-import os
-import time
 import matplotlib.pyplot as plt
-from glob import glob
 from scipy.signal import medfilt2d
 import fpp_tools as fpp
+import time
 
-# ========================= MAIN CALIBRATION LOOP =========================
-print("=== START CALIBRATION ===\n")
-print("Place reference plane (0 mm) and press ENTER")
-input()
-
-for idx, h_mm in enumerate(KNOWN_THICKNESSES_MM):
-    print(f"\n=== STEP {idx+1}/{len(KNOWN_THICKNESSES_MM)} : {h_mm:.1f} mm ===")
-    if h_mm > 0:
-        input(f"   → Place {h_mm:.1f} mm plate → press ENTER when ready...")
-    
-    height_dir = f"{CAPTURE_DIR}/h{h_mm:05.1f}mm"
-    os.makedirs(height_dir, exist_ok=True)
-    
-    # <<< SAFETY: Remove old captures for this height >>>
-    for old_file in glob(f"{height_dir}/*.png"):
-        try:
-            os.remove(old_file)
-        except:
-            pass
-    print(f"   Cleared old images in {height_dir}")
-
-    for pat in patterns:
-        img_path = f"{PATTERN_DIR}/{pat}"
-        img = cv2.imread(img_path)
-        if img is None:
-            raise FileNotFoundError(f"Pattern not found: {img_path}")
-        
-        project_image(img)
-        time.sleep(1.0)  # stable projection
-        
-        # Simple clean name — safe because we deleted old ones
-        clean_name = f"{pat}" 
-        final_path = os.path.join(height_dir, clean_name)
-        
-        _, live_img = capture_kinect(f"h{h_mm:05.1f}mm_{pat}")
-        os.rename(glob(f"{CAPTURE_DIR}/cap_*.jpg")[0], final_path)  # move the temp file
-        
-        # cv2.imshow("Kinect Live", cv2.resize(live_img, (900, 560)))
-        cv2.waitKey(50)
-
-    print(f"Finished {h_mm:.1f} mm → {len(patterns)} images saved cleanly")
-
-print("\nCapture phase complete!")
 
 # ========================= PHASE RECONSTRUCTION & CALIBRATION =========================
 print("\nReconstructing phase maps...")
@@ -64,14 +15,12 @@ print("\nReconstructing phase maps...")
 ref_phi_flat = None
 mean_dphi_list = []
 
-for h_dir in sorted(glob(f"{CAPTURE_DIR}/h*mm")):
+for h_dir in sorted(glob(f"{config.CAPTURE_DIR}/h*mm")):
     h_val = float(os.path.basename(h_dir)[1:-2].replace("mm", ""))
     print(f"→ Processing {os.path.basename(h_dir)}")
 
     # Load only the 6 essential images: black, white, fringe_0..3
-    fringe_files = [f for f in sorted(glob(f"{h_dir}/*.png")) if "fringe_" in f]  # 4
-    bw_files = [f for f in sorted(glob(f"{h_dir}/*.png")) if "black" in f or "white" in f]
-    files = bw_files + fringe_files
+    files = [f for f in sorted(glob(f"{h_dir}/*.png")) if "fringe_" in f]  # 4
     stack = [cv2.imread(f, cv2.IMREAD_GRAYSCALE).astype(np.float32) for f in files]
     imagestack = np.dstack(stack)
 
@@ -110,7 +59,7 @@ plt.show()
 print("\nAll phase maps computed.")
 
 # ========================= FIT CALIBRATION CURVE =========================
-heights = np.array(KNOWN_THICKNESSES_MM)
+heights = np.array(config.KNOWN_THICKNESSES_MM)
 dphi_measured = np.array(mean_dphi_list)
 
 # Use only non-zero heights for fitting
