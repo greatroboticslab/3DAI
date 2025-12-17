@@ -14,6 +14,7 @@ print("\nReconstructing phase maps...")
 
 ref_phi_flat = None
 mean_dphi_list = []
+plane_ref = None
 
 for h_dir in sorted(glob(f"{config.CAPTURE_DIR}/h*mm")):
     h_val = float(os.path.basename(h_dir)[1:-2].replace("mm", ""))
@@ -29,23 +30,24 @@ for h_dir in sorted(glob(f"{config.CAPTURE_DIR}/h*mm")):
         imagestack, order=1, eps=1e-4
     )
 
-    # Unwrap + remove tilt plane
-    unwrapped = np.unwrap(np.unwrap(phi_img, axis=1), axis=0)
-    h, w = unwrapped.shape
-    X, Y = np.meshgrid(np.arange(w), np.arange(h))
-    A = np.c_[X.ravel(), Y.ravel(), np.ones(X.size)]
-    coeffs = np.linalg.lstsq(A, unwrapped.ravel(), rcond=None)[0]
-    plane = (coeffs[0]*X + coeffs[1]*Y + coeffs[2]).reshape(h, w)
-    phi_flat = unwrapped - plane
 
-    # Light median filtering
-    phi_flat = medfilt2d(phi_flat, 5)
+    unwrapped = np.unwrap(np.unwrap(phi_img, axis=1), axis=0)
 
     if ref_phi_flat is None:
-        ref_phi_flat = phi_flat
+        h, w = unwrapped.shape
+        X, Y = np.meshgrid(np.arange(w), np.arange(h))
+        A = np.c_[X.ravel(), Y.ravel(), np.ones(X.size)]
+        coeffs = np.linalg.lstsq(A, unwrapped.ravel(), rcond=None)[0]
+        plane_ref = (coeffs[0]*X + coeffs[1]*Y + coeffs[2]).reshape(h, w)
+        ref_phi_flat = unwrapped - plane_ref
+        mean_dphi_list.append(0)
+        continue
 
+    phi_flat = unwrapped - plane_ref
     delta_phi = phi_flat - ref_phi_flat
-    mean_delta_phi = np.mean(delta_phi)
+
+    mask = amp_img > 0.2 * np.max(amp_img)
+    mean_delta_phi = np.mean(delta_phi[mask])
 
     mean_dphi_list.append(mean_delta_phi)
 
@@ -64,6 +66,13 @@ dphi_measured = np.array(mean_dphi_list)
 
 # Use only non-zero heights for fitting
 valid = heights > 0.1
+
+print("Valid Heights: ", valid)
+print("heights:", heights)
+print("dphi_measured:", dphi_measured)
+print("len heights:", len(heights))
+print("len dphi:", len(dphi_measured))
+
 poly_coeffs = np.polyfit(dphi_measured[valid], heights[valid], deg=2)
 
 print("\nCALIBRATION RESULT")

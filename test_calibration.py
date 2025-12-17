@@ -77,7 +77,7 @@ print(f"Height range: {np.nanmin(height_mm):.1f} mm to {np.nanmax(height_mm):.1f
 
 # Display
 plt.figure(figsize=(10, 6))
-im = plt.imshow(height_mm, cmap='jet', vmin=0, vmax=30)  # adjust vmax to your expected range
+im = plt.imshow(height_mm, cmap='jet', vmin=0, vmax=10)  # adjust vmax to your expected range
 plt.title("Height Map (mm)")
 plt.colorbar(im, label="Height (mm)")
 plt.axis('off')
