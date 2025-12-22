@@ -12,8 +12,33 @@ It was discovered that even with ideal images the scripts would generate very fe
 Additions:
 Added a camera_cognex module for connecting to older cognex cameras to download files through FTP and trigger via Telnet. This remains untested.
 
+Transition to fpp_tools:
 
-# 3DAI
+Due to extensive hard-coding assumptions in the original Structured Light Project repository—particularly the requirement for two physical cameras and tightly coupled triangulation logic—it became impractical to adapt the code for a single-camera, projector-based system integrated into a robotic cell. Refactoring the original codebase to decouple camera geometry, triggering, and phase computation would have required significant invasive changes and risked diverging from the upstream implementation.
+
+To address this, the project transitioned to using the FPP Tools repository (https://github.com/nzhagen/fpp_tools
+) as the core fringe-processing backend. The fpp_tools library provides well-isolated, camera-agnostic implementations for generating phase-shifted fringe patterns and computing per-pixel wrapped phase (Δφ) from a sequence of captured images. This separation allows image acquisition, hardware triggering, and calibration to be handled independently of the fringe-processing logic, making it better suited for integration with Cognex cameras, Kinect-based prototyping, and robotic decision-making pipelines. The move also simplifies testing, simulation, and future hardware changes by cleanly separating fringe generation and phase computation from system-specific acquisition and triangulation code.
+
+Phase-to-Height Calibration Explanation (calibrate.py)
+
+In fringe projection, each pixel’s measured wrapped phase φ represents the relative position of the projected fringe pattern as observed by the camera. When an object is introduced at a known height, the geometry between the projector, object surface, and camera causes a phase shift Δφ relative to a reference flat plane. This phase difference is directly related to surface height, but the relationship is nonlinear due to projector–camera geometry, perspective effects, and lens distortion.
+
+This calibration procedure establishes an empirical mapping between mean phase difference Δφ (radians) and physical height (mm). A reference phase map is first captured on a flat surface and flattened by removing its best-fit plane to eliminate tilt and system bias. For each known calibration height, the same flattening is applied, and the per-pixel phase difference Δφ relative to the reference is computed. The mean Δφ over high-contrast pixels is then associated with the known physical height.
+
+A quadratic polynomial is fitted to these (Δφ, height) pairs, yielding a calibration curve that converts measured phase differences directly into physical dimensions. Once calibrated, this mapping can be applied per pixel to transform a Δφ map into a dense height or depth map without requiring explicit triangulation.
+
+Test Calibration and Height Map Generation
+
+The test_calibration.py script validates the Kinect + projector fringe projection system by converting newly captured fringe images into a metric height map using the previously generated phase-to-height calibration. A reference phase map is first captured on an empty, flat plane and processed by phase unwrapping and plane subtraction to remove global tilt and system bias. This establishes a consistent zero-height baseline aligned with the calibration procedure.
+
+An object is then scanned using the same fringe patterns and processing steps. The per-pixel phase difference Δφ between the object and reference phase maps is computed and converted into physical height (mm) by applying the calibrated polynomial mapping. Low-confidence pixels are masked based on fringe modulation, and the resulting height map is displayed and optionally saved for inspection or downstream use. This script provides a simple end-to-end check that the calibration and phase reconstruction pipeline produces meaningful physical measurements.
+
+Results:
+The figure below shows a scan of a mobile phone captured after system calibration. The reconstructed surface exhibits a residual wave-like error pattern, which is suspected to result from the interaction between the Kinect RGB camera’s rolling shutter and the use of a single-chip DLP projector. The projector displays color sequentially, while the Kinect camera samples different image rows at slightly different times, causing varying color contributions across the captured frame. This temporal mismatch introduces phase artifacts that manifest as periodic wave errors in the reconstructed height map. Because there is no practical mechanism to synchronize the projector’s color sequencing with the Kinect’s image acquisition, the most effective mitigation strategy is to project fringes using a single color channel, thereby reducing temporal color aliasing. 
+
+!['Testing Results/Camera_Scan_Improved_Calibration.png'](https://github.com/greatroboticslab/3DAI/blob/main/Testing%20Results/Camera_Scan_Improved_Calibration.png)
+
+# 3DAI Requirements
 Running pykinect2 requirments on Windows 10
 1. python version 3.9.13 # setup an environment
 2. pip install comtypes==1.4.13
