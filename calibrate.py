@@ -25,11 +25,7 @@ for h_dir in sorted(glob(f"{config.CAPTURE_DIR}/h*mm")):
     stack = [cv2.imread(f, cv2.IMREAD_GRAYSCALE).astype(np.float32) for f in files]
     imagestack = np.dstack(stack)
 
-    # Use order=1 to avoid singularity
-    phi_img, amp_img, bias_img, deltas = fpp.estimate_deltas_and_phi_lsq(
-        imagestack, order=1, eps=1e-4
-    )
-
+    phi_img, _, _ = fpp.estimate_phi_N_uniform_frames(imagestack)
 
     unwrapped = np.unwrap(np.unwrap(phi_img, axis=1), axis=0)
 
@@ -46,19 +42,9 @@ for h_dir in sorted(glob(f"{config.CAPTURE_DIR}/h*mm")):
     phi_flat = unwrapped - plane_ref
     delta_phi = phi_flat - ref_phi_flat
 
-    mask = amp_img > 0.2 * np.max(amp_img)
-    mean_delta_phi = np.mean(delta_phi[mask])
-
+    mean_delta_phi = np.mean(delta_phi)
     mean_dphi_list.append(mean_delta_phi)
 
-    plt.figure(figsize=(9,5))
-    im = plt.imshow(delta_phi, cmap='rainbow', vmin=-5, vmax=5)
-    plt.title(f"Δφ map – {h_val:.1f} mm   (mean = {mean_delta_phi:.3f} rad)")
-    plt.colorbar(im)
-    plt.show(block=False)
-
-plt.show()
-print("\nAll phase maps computed.")
 
 # ========================= FIT CALIBRATION CURVE =========================
 heights = np.array(config.KNOWN_THICKNESSES_MM)

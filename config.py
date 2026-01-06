@@ -16,7 +16,7 @@ ROI_Y, ROI_X = slice(200, 760), slice(250, 1050)
 
 # Fringe parameters (tune once for your setup)
 NUM_FRINGES = 24          # How many vertical fringes across projector width → ~50–60 px per fringe is ideal
-PHASES_DEG = [0, 90, 180, 270]   # Classic 4-step phase shifting (best noise/gamma performance)
-GRAY_LEVELS = 10          # For optional flat-fielding / gamma estimation
+N_PHASES = 60             # Number of evenly spaced fringe projections
+PHASES_DEG = [i * 360 / N_PHASES for i in range(N_PHASES)] 
 
 # =========================================================

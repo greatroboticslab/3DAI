@@ -12,6 +12,7 @@ from scipy.signal import medfilt2d
 import fpp_tools as fpp
 import lib_3dai
 import config
+from mpl_toolkits.mplot3d import Axes3D
 
 # Load your calibration
 coeffs = np.loadtxt("calibration_kinect.txt")
@@ -32,7 +33,7 @@ ref_files = sorted(glob(f"{config.CAPTURE_DIR}/ref/fringe_*.png"))
 stack = [cv2.imread(f, cv2.IMREAD_GRAYSCALE).astype(np.float32) for f in ref_files]
 imagestack_ref = np.dstack(stack)
 
-phi_ref, _, _, _ = fpp.estimate_deltas_and_phi_lsq(imagestack_ref, order=1, eps=1e-4)
+phi_ref, _, _ = fpp.estimate_phi_N_uniform_frames(imagestack_ref)
 
 # Unwrap and remove tilt (same as calibration)
 unwrapped_ref = np.unwrap(np.unwrap(phi_ref, axis=1), axis=0)
@@ -57,7 +58,7 @@ obj_files = sorted(glob(f"{config.CAPTURE_DIR}/obj/fringe_*.png"))
 stack = [cv2.imread(f, cv2.IMREAD_GRAYSCALE).astype(np.float32) for f in obj_files]
 imagestack_obj = np.dstack(stack)
 
-phi_obj, _, _, _ = fpp.estimate_deltas_and_phi_lsq(imagestack_obj, order=1, eps=1e-4)
+phi_obj, _, _ = fpp.estimate_phi_N_uniform_frames(imagestack_obj)
 
 unwrapped_obj = np.unwrap(np.unwrap(phi_obj, axis=1), axis=0)
 plane_obj = (plane_coeffs[0]*X + plane_coeffs[1]*Y + plane_coeffs[2]).reshape(h, w)
@@ -77,22 +78,41 @@ print(f"Height range: {np.nanmin(height_mm):.1f} mm to {np.nanmax(height_mm):.1f
 
 # Display
 plt.figure(figsize=(10, 6))
-im = plt.imshow(height_mm, cmap='jet', vmin=0, vmax=10)  # adjust vmax to your expected range
+im = plt.imshow(height_mm, cmap='jet', vmin=0, vmax=15)  # adjust vmax to your expected range
 plt.title("Height Map (mm)")
 plt.colorbar(im, label="Height (mm)")
 plt.axis('off')
 plt.show()
 
-# Optional: save as numpy array or PNG
-save = input("Save height map as 'height_map.npy'? (y/n): ")
-if save.lower() == 'y':
-    np.save("height_map.npy", height_mm)
-    print("Saved as height_map.npy")
-    # Also save a pretty PNG
-    norm = plt.Normalize(vmin=0, vmax=30)
-    rgba = plt.cm.jet(norm(height_mm))
-    rgba[~mask] = 0  # black background
-    cv2.imwrite("height_map.png", (rgba[:, :, :3] * 255).astype(np.uint8)[..., ::-1])
-    print("Also saved pretty PNG as height_map.png")
+fig = plt.figure(figsize=(12, 8))
+ax = fig.add_subplot(111, projection='3d')
 
-print("\nTest complete! Your scanner works!")
+# Downsample for speed
+ds = 3  # increase if slow
+Xs = X[::ds, ::ds]
+Ys = Y[::ds, ::ds]
+Zs = height_mm[::ds, ::ds]
+
+# remove reference plane and none existant points
+min_height = 0.5  # mm (adjust as needed)
+
+valid = (~np.isnan(Zs)) & (Zs > min_height)
+
+sc = ax.scatter(
+    Xs[valid],
+    Ys[valid],
+    Zs[valid],
+    c=Zs[valid],
+    cmap='jet',
+    s=1
+)
+
+ax.set_title("3D Point Cloud (Height Map)")
+ax.set_xlabel("X (pixels)")
+ax.set_ylabel("Y (pixels)")
+ax.set_zlabel("Height (mm)")
+
+fig.colorbar(sc, ax=ax, shrink=0.5, aspect=10, label="Height (mm)")
+
+ax.view_init(elev=40, azim=-120)
+plt.show()

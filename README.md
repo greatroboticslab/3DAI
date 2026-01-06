@@ -38,6 +38,10 @@ The figure below shows a scan of a mobile phone captured after system calibratio
 
 !['Testing Results/Camera_Scan_Improved_Calibration.png'](https://github.com/greatroboticslab/3DAI/blob/main/Testing%20Results/Camera_Scan_Improved_Calibration.png)
 
+After refractoring the script to allow for an arbitrary number of fringe projection phases, results were significantly improved using 60 fringe projections.
+
+
+
 # 3DAI Requirements
 Running pykinect2 requirments on Windows 10
 1. python version 3.9.13 # setup an environment
@@ -51,3 +55,14 @@ Running pykinect2 requirments on Windows 10
 9.  Comment out line 2863: from comtypes import _check_version; _check_version('')
 10. {Enviroment}\Lib\site-packages\pykinect2\PyKinectRuntime.py
 11. Replace all time.clock() calls with time.perf_counter()
+
+# Running scripts on the Lab Computer
+
+1. Adjust settings in C:\Users\Robotics_Lab\3DAI\3DAI\config.py
+2. Open CMD terminal
+3. Start the enviroment with the patched pykinect2 library:  c:\kinectEnv\scripts\activate
+4. Navigate to local repo location: C:\Users\Robotics_Lab\3DAI\3DAI
+5. Generate projector fringes: run: python generate_fringes.py
+6. Calibration: run: python capture_patterns.py, follow prompts, place requested gauges in the scanning area when requested. After captureing images, check images in C:\Users\Robotics_Lab\3DAI\3DAI\captures_kinect. If fringes are not fully visible adjust cropping settings in config.py
+7. Calibration: run: python calibrate.py
+8. Use: run: python test_calibration.py
