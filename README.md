@@ -41,7 +41,7 @@ The figure below shows a scan of a mobile phone captured after system calibratio
 
 After refractoring the script to allow for an arbitrary number of fringe projection phases, results were significantly improved using 60 fringe projections.
 
-
+!['Testing Results/60_Finge_Count.png']('Testing Results/60_Finge_Count.png')
 
 # 3DAI Requirements
 Running pykinect2 requirments on Windows 10
