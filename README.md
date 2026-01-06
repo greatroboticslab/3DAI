@@ -1,8 +1,6 @@
 # Reports
 [Initial Report](Reports/FPP_Report_1.pdf)
 
-# This project is to adapt the fringe projection python scripts from the Structured Light Project written by, Anton Poroykov, Ph.D., associated professor and Nikita Sivov, graduate student, to use a Cognex camera and integrate triggering with a robotic cell that makes decisions based on the point cloud and images generated.
-
 # Findings:
 The Structured Light Project scripts are hard-coded for two cameras. Options to accomidiate this appear to be to refactor the code to work with a single camera and a projector. It may be possible to use one real camera and one simulated camera to minimize code changes.
 
