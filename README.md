@@ -48,6 +48,16 @@ Additionaly a point cloud was generated with the reference plane removed.
 !['Testing Results/60_Finge_Count.png'](https://github.com/greatroboticslab/3DAI/blob/main/Testing%20Results/60_Finge_Count_Point_Cloud.png)
 
 # 3DAI Requirements
+Equipment:
+1. Windows 10 PC
+2. Kinect Model: 1520
+3. TI DLPLCR4500EVM — DLP® LightCrafter™ 4500
+
+Software:
+1. KinectSDK-V2 #for Kinect camera
+2. DLP LightCrafter 4500 Control Software v4.0.0 #for projector
+3. Python
+
 Running pykinect2 requirments on Windows 10
 1. python version 3.9.13 # setup an environment
 2. pip install comtypes==1.4.13
