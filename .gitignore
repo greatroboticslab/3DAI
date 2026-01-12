@@ -3,3 +3,4 @@ structured-light-python-main/__pycache__
 patterns_auto
 captures_kinect
 calibration_kinect.txt
+__pycache__
