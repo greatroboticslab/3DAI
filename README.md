@@ -57,6 +57,7 @@ Software:
 1. KinectSDK-V2 #for Kinect camera
 2. DLP LightCrafter 4500 Control Software v4.0.0 #for projector
 3. Python
+4. Zidag (to change USB device driver): [Github](https://github.com/pbatard/libwdi), [Website](https://zadig.akeo.ie/)
 
 Running pykinect2 requirments on Windows 10
 1. python version 3.9.13 # setup an environment
@@ -70,6 +71,12 @@ Running pykinect2 requirments on Windows 10
 9.  Comment out line 2863: from comtypes import _check_version; _check_version('')
 10. {Enviroment}\Lib\site-packages\pykinect2\PyKinectRuntime.py
 11. Replace all time.clock() calls with time.perf_counter()
+
+Using pycrafter4500 library
+1. Use Zidag to change the driver for the projector to libusb-win32
+2. pip install pycrafter4500
+3. If you need to revert to the orignal drive, use device manager to unistall the device, use advanced and check delete driver.
+4. If you need the DLP LightCrafter 4500 GUI to work you have to revery to the original driver.
 
 # Running scripts on the Lab Computer
 
