@@ -27,7 +27,7 @@ def capture_projections(dir):
             raise FileNotFoundError(f"Pattern not found: {img_path}")
         
         project_image(img,config.SECOND_SCREEN_X)
-        time.sleep(1.0)  # stable projection
+        time.sleep(0.4)  # stable projection
         
         # Simple clean name — safe because we deleted old ones
         clean_name = f"{pat}" 

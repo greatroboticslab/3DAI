@@ -1,7 +1,7 @@
 import os
 
 # ========================== CONFIG ==========================
-PROJECTOR_RES = (1140, 912)           # Your projector resolution
+PROJECTOR_RES = (912, 1140)           # Your projector resolution
 SECOND_SCREEN_X = 1920                # X offset of your second monitor
 CAPTURE_DIR = "captures_kinect"
 PATTERN_DIR = "patterns_auto"         # Will be created automatically

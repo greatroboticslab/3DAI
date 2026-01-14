@@ -66,16 +66,17 @@ if gen_bmp:
     # Fringe BMPs
     for i, phase in enumerate(phases_rad):
         img = imagestack[:, :, i]
-
-        # Match fpp_tools quantization exactly
         img_8bit = np.uint8(np.rint(img))
-
-        bmp = Image.fromarray(img_8bit, mode="L")
+        # Transpose to width x height
+        img_8bit_T = img_8bit
+        bmp_rgb = Image.fromarray(img_8bit_T, mode="L").convert("RGB")
         filename = f"{bmp_dir}/fringe_{int(np.rad2deg(phase)):03}.bmp"
-        bmp.save(filename)
+        bmp_rgb.save(filename)
 
     # Black & White BMPs
-    Image.fromarray(black_img, mode="L").save(f"{bmp_dir}/black.bmp")
-    Image.fromarray(white_img, mode="L").save(f"{bmp_dir}/white.bmp")
+    black_T = black_img
+    white_T = white_img
+    Image.fromarray(black_T, mode="L").convert("RGB").save(f"{bmp_dir}/black.bmp")
+    Image.fromarray(white_T, mode="L").convert("RGB").save(f"{bmp_dir}/white.bmp")
 
     print(f"   BMP images saved to {bmp_dir}")
