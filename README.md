@@ -47,6 +47,14 @@ Additionaly a point cloud was generated with the reference plane removed.
 
 !['Testing Results/60_Finge_Count.png'](https://github.com/greatroboticslab/3DAI/blob/main/Testing%20Results/60_Finge_Count_Point_Cloud.png)
 
+After setting up the Light Crafter software and projecting a pattern of only green light from the HDMI
+
+!['Testing Results/GreenOnly_120_Phases.png'](https://github.com/greatroboticslab/3DAI/blob/main/Testing%20Results/GreenOnly_120_Phases.png)
+
+Point Cloud.
+
+!['Testing Results/GreenOnly_120_Phases_Point_Cloud.png'](https://github.com/greatroboticslab/3DAI/blob/main/Testing%20Results/GreenOnly_120_Phases_Point_Cloud.png)
+
 # 3DAI Requirements
 Equipment:
 1. Windows 10 PC
