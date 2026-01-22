@@ -4,4 +4,5 @@ patterns_auto
 patterns_auto_bmp
 captures_kinect
 calibration_kinect.txt
+gamma_calibration
 __pycache__
