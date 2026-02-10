@@ -2,12 +2,8 @@
 # Simple real-time test of your Kinect + Projector calibration
 # Place any object on the reference plane and watch the height map!
 
-import cv2
 import numpy as np
-import os
-import time
 import matplotlib.pyplot as plt
-from glob import glob
 from scipy.signal import medfilt2d
 import fpp_tools as fpp
 import lib_3dai
@@ -18,20 +14,11 @@ from mpl_toolkits.mplot3d import Axes3D
 coeffs = np.loadtxt("calibration_kinect.txt")
 print(f"Loaded calibration: a={coeffs[0]:.8f}, b={coeffs[1]:.7f}, c={coeffs[2]:.7f}")
 
-
-# Required patterns (must exist from calibration)
-patterns = lib_3dai.get_patterns(config.PATTERN_DIR)
-
 # ========================== REFERENCE PHASE (from 0 mm) ==========================
 print("\n=== CAPTURING REFERENCE (empty plane) ===")
 input("Make sure the reference plane is empty and flat. Press ENTER to continue...")
 
-lib_3dai.capture_projections(f"{config.CAPTURE_DIR}/ref")
-
-# Compute reference phase
-ref_files = sorted(glob(f"{config.CAPTURE_DIR}/ref/fringe_*.png"))
-stack = [cv2.imread(f, cv2.IMREAD_GRAYSCALE).astype(np.float32) for f in ref_files]
-imagestack_ref = np.dstack(stack)
+imagestack_ref = lib_3dai.capture_projections(config.PROJECTOR_RES,config.PHASES_DEG)
 
 phi_ref, _, _ = fpp.estimate_phi_N_uniform_frames(imagestack_ref)
 
@@ -51,12 +38,10 @@ print("Reference phase captured and processed.\n")
 print("=== PLACE YOUR OBJECT AND SCAN ===")
 input("Place the object on the reference plane. Press ENTER to scan...")
 
-lib_3dai.capture_projections(f"{config.CAPTURE_DIR}/obj")
 
 # Compute object phase
-obj_files = sorted(glob(f"{config.CAPTURE_DIR}/obj/fringe_*.png"))
-stack = [cv2.imread(f, cv2.IMREAD_GRAYSCALE).astype(np.float32) for f in obj_files]
-imagestack_obj = np.dstack(stack)
+
+imagestack_obj = lib_3dai.capture_projections(config.PROJECTOR_RES,config.PHASES_DEG)
 
 phi_obj, _, _ = fpp.estimate_phi_N_uniform_frames(imagestack_obj)
 

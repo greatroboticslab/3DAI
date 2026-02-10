@@ -1,43 +1,44 @@
 import numpy as np
-import fpp_tools as fpp
-from glob import glob
-import os
-
-# ------------------- Generate All Patterns -------------------
-def generate_patterns(resolution,dir,phases_deg,num_fringes):
-
-    print("Clearing old patterns")
-
-    for old_file in glob(f"{dir}/*.png"):
-        try:
-            os.remove(old_file)
-        except:
-            pass
-    print(f"   Cleared old images in {dir}")
-
-    print("Generating patterns using fpp_tools.generate_fringe_patterns() ...")
 
 
-    #sinusoidal fringes
-    phases_rad = np.deg2rad(phases_deg)
-    fpp.generate_fringe_patterns(
-        Nx=resolution[1],     
-        Ny=resolution[0],      
-        phases=phases_rad,
-        num_fringes=num_fringes,
-        gamma=1.0,
-        filebase=f"{dir}/fringe_"   # ← this creates fringe_000.png, fringe_090.png, etc.
-    )
+def generate_pattern(resolution, phase, num_fringes=10, gamma=1.0):
+    '''
+    Create a single image containing a sinusoidal fringe pattern.
 
+    Parameters
+    ----------
+    resolution : tuple
+        (width, height) - The image dimensions in pixels.
+    phase : float
+        The phase (in radians) of the pattern to generate.
+    num_fringes : float
+        How many fringes should appear inside each projection frame.
+    gamma : float
+        The gamma value to use for nonlinear conversion of the sinusoid profile.
 
-def get_patterns(dir):
-    all_files = os.listdir(dir)
+    Returns
+    -------
+    fringe_pattern : ndarray
+        A 2D array of shape (height, width) containing the fringe pattern with 
+        uint8 values in the range [0, 255].
 
-    # Add only the actual fringe files that exist
-    patterns = sorted([f for f in all_files if f.endswith(".png")])
+    Example
+    -------
+    pattern = generate_pattern((640, 480), pi/2, num_fringes=12)
+    '''
+    Ny = resolution[0]  # width
+    Nx = resolution[1]  # height
+
+    (proj_xcoord, proj_ycoord) = np.indices((Nx, Ny))
+    k = 2.0 * np.pi * num_fringes / Ny
+    fringe_pattern = pow(0.5 + 0.5 * np.cos(k * proj_ycoord + phase), gamma)
+    fringe_pattern = 255.0 * fringe_pattern / np.amax(fringe_pattern)
     
-    for p in patterns:
-        print("   ", p)
-    print()
+    # Convert to uint8 for proper display
+    fringe_pattern = np.uint8(np.rint(fringe_pattern))
+    
+    return fringe_pattern
+    
 
-    return patterns
+    
+
