@@ -23,6 +23,6 @@ CHANNEL_OF_INTEREST = 0b111  # White
 SETTLE_TIME = 0.2  # seconds
 
 # Number of Kinect color frames to capture and average together
-# Higher values = less noise / better quality but longer capture time
+# Higher values = less noise /  better quality but longer capture time
 # Typical good values: 3–15
 NUMBER_OF_CAPTURES = 11 # not used for data collection
