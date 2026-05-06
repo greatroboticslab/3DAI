@@ -1,8 +1,74 @@
-structured-light-python-main/fpp_env
-structured-light-python-main/__pycache__
-patterns_auto
-patterns_auto_bmp
-captures_kinect
-calibration_kinect.txt
-gamma_calibration
-__pycache__
+# =========================
+# Python virtual environments
+# =========================
+.venv/
+venv/
+ENV/
+env/
+
+# =========================
+# Byte-compiled / cache files
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Distribution / packaging
+# =========================
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# =========================
+# Virtual environment config
+# =========================
+pip-log.txt
+pip-delete-this-directory.txt
+
+# =========================
+# Testing / coverage
+# =========================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# =========================
+# Jupyter Notebook
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Environment variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# IDEs / editors
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# mypy / type checking
+# =========================
+.mypy_cache/
+.dmypy.json
+dmypy.json
