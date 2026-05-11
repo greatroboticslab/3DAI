@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env/
+.env.*
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# Data (IMPORTANT)
+data/
+images/
+Mount_Design/
+Projector_Settings/
+Reports/
+*.db
+
+# python modules
+fpp_tools/
+lib_3dai/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
