@@ -1,21 +1,40 @@
 services:
   db:
     image: postgres:16
+    container_name: 3dai-db-1
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_DB: capture
       POSTGRES_USER: postgres
     ports:
       - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d capture"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
   api:
     build: .
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    container_name: 3dai-api-1
+    command: >
+      sh -c "
+        echo 'Running database initialization...' &&
+        python3 init_db.py &&
+        echo 'Database initialized successfully' &&
+        uvicorn main:app --host 0.0.0.0 --port 8000
+      "
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres@db:5432/capture
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-    - ./data/images:/app/images
+      - ./data/images:/app/images
+
+volumes:
+  postgres_data:
