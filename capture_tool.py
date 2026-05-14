@@ -16,13 +16,17 @@ import time
 
 import requests
 
+from lib_3dai.system import SystemManager
+from lib_3dai.camera import Camera
+
 API = "http://localhost:8000"
 IMAGE_ROOT = "./data/images"
 
+camera = Camera(SystemManager())  # Initialize the camera instance
 
-# ─────────────────────────── Capture (fake) ────────────────────────────
+# ─────────────────────────── Capture ────────────────────────────
 
-def fake_capture(session_id:str, step_index: int) -> str:
+def capture(session_id:str, step_index: int) -> str:
     """
     Simulate acquiring an image for the given step.
 
@@ -104,7 +108,7 @@ def run_session(total_steps: int = 10) -> None:
         step_id = step["step_id"]
 
         print(f"Step {idx + 1}/{len(steps)}")
-        path = fake_capture(session_id, idx)
+        path = capture(session_id, idx)
         print(f"  captured  → {path}")
 
         report_image(session_id, step_id, path)
