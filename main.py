@@ -38,13 +38,15 @@ def create_session(payload: CreateSessionPayload = None):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO sessions VALUES (%s, %s, %s, %s)",
+                "INSERT INTO sessions (id, status, total_steps, completed_steps) "
+                "VALUES (%s, %s, %s, %s)",
                 (session_id, "running", total_steps, 0)
             )
             for i in range(total_steps):
                 step_id = str(uuid.uuid4())
                 cur.execute(
-                    "INSERT INTO steps VALUES (%s, %s, %s, %s)",
+                    "INSERT INTO steps (id, session_id, step_index, status) "
+                    "VALUES (%s, %s, %s, %s)",
                     (step_id, session_id, i, "pending")
                 )
         conn.commit()
