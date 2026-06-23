@@ -26,6 +26,11 @@ jobs:
           pip install numpy imageio
           python tests/test_fpp.py
 
+      - name: Prepare host data dir
+        # Create it as the runner user first, otherwise the docker bind mount
+        # makes ./data/images root-owned and the host-side worker can't write.
+        run: mkdir -p data/images
+
       - name: Build and start API stack
         run: docker compose up -d --build
 
