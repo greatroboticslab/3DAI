@@ -110,33 +110,64 @@ def report_image(payload: ReportImagePayload):
     """
     Worker calls this after capturing (real or fake) an image for a step.
 
-    Marks the step as done, records the image path, increments the session
-    progress counter, and flips the session to 'complete' once all steps
-    are finished.
+    The step must belong to the given session. Marks the step done, records
+    the image path, and recomputes session progress from the actual number
+    of completed steps, flipping the session to 'complete' once every step
+    is finished.
+
+    This is idempotent: reporting a step that is already done is a no-op
+    that still returns ok, so a retrying worker cannot double-count progress
+    or insert duplicate images.
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Mark the step done only if it belongs to this session and is not
+            # already done. The affected row count tells us whether this report
+            # represents genuinely new progress.
             cur.execute(
-                "INSERT INTO images VALUES (%s, %s, %s, %s)",
+                "UPDATE steps SET status='done' "
+                "WHERE id=%s AND session_id=%s AND status<>'done'",
+                (payload.step_id, payload.session_id)
+            )
+
+            if cur.rowcount == 0:
+                # No transition happened: the step either doesn't belong to
+                # this session, or it was already done. Tell those apart.
+                cur.execute(
+                    "SELECT 1 FROM steps WHERE id=%s AND session_id=%s",
+                    (payload.step_id, payload.session_id)
+                )
+                if cur.fetchone() is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Step not found for this session"
+                    )
+                # Already done: idempotent no-op, no image inserted, no count change.
+                return {"ok": True, "duplicate": True}
+
+            # Genuinely new progress: record the image, then recompute the
+            # session's completed count from the steps table itself. Deriving
+            # the count from truth (instead of blindly incrementing) means it
+            # cannot drift, even under retries or out-of-order reports.
+            cur.execute(
+                "INSERT INTO images (id, session_id, step_id, file_path) "
+                "VALUES (%s, %s, %s, %s)",
                 (str(uuid.uuid4()), payload.session_id, payload.step_id, payload.file_path)
             )
-            cur.execute(
-                "UPDATE steps SET status='done' WHERE id=%s",
-                (payload.step_id,)
-            )
-            # Increment counter and auto-complete the session when all steps are done
             cur.execute(
                 """
                 UPDATE sessions
                 SET
-                    completed_steps = completed_steps + 1,
-                    status = CASE
-                        WHEN completed_steps + 1 >= total_steps THEN 'complete'
-                        ELSE status
-                    END
+                    completed_steps = sub.done,
+                    status = CASE WHEN sub.done >= total_steps THEN 'complete' ELSE status END
+                FROM (
+                    SELECT count(*) AS done
+                    FROM steps
+                    WHERE session_id = %s AND status = 'done'
+                ) AS sub
                 WHERE id = %s
                 """,
-                (payload.session_id,)
+                (payload.session_id, payload.session_id)
             )
         conn.commit()
 
