@@ -107,6 +107,55 @@ def get_steps(session_id: str):
     ]
 
 
+@app.post("/sessions/{session_id}/claim-step")
+def claim_step(session_id: str):
+    """
+    Atomically claim the next available step for a session.
+
+    Returns the lowest-index step that is still pending and unclaimed, marking
+    it claimed so no other worker can take it. This lets multiple workers pull
+    from the same session concurrently without grabbing the same step.
+
+    Response:
+        {"step_id": ..., "step_index": ..., "status": ...}  when a step is claimed
+        {"step_id": None}                                   when none remain
+
+    The SELECT ... FOR UPDATE SKIP LOCKED makes the claim safe under concurrency:
+    each concurrent caller locks and takes a different row instead of blocking or
+    double-claiming.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM sessions WHERE id=%s", (session_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            cur.execute(
+                """
+                UPDATE steps
+                SET claimed = TRUE
+                WHERE id = (
+                    SELECT id
+                    FROM steps
+                    WHERE session_id = %s AND status = 'pending' AND claimed = FALSE
+                    ORDER BY step_index
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                RETURNING id, step_index, status
+                """,
+                (session_id,)
+            )
+            row = cur.fetchone()
+        conn.commit()
+
+    if row is None:
+        # Session exists but has no pending, unclaimed steps left to hand out.
+        return {"step_id": None}
+
+    return {"step_id": row[0], "step_index": row[1], "status": row[2]}
+
+
 @app.post("/report-image")
 def report_image(payload: ReportImagePayload):
     """
