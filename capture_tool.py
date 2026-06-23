@@ -12,17 +12,26 @@ Usage:
 
 import argparse
 import os
+import sys
 import time
 
 import requests
 
-from lib_3dai.system import SystemManager
-from lib_3dai.camera import Camera
+# The console output below uses Unicode glyphs (→, ✓). On Windows the default
+# console encoding is cp1252, which cannot encode them and raises
+# UnicodeEncodeError mid-session. Force UTF-8 so the worker runs anywhere.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
 
 API = "http://localhost:8000"
 IMAGE_ROOT = "./data/images"
 
-camera = Camera(SystemManager())  # Initialize the camera instance
+# NOTE: This worker is intentionally hardware-independent. The real Kinect/webcam
+# acquisition path lives in lib_3dai, but importing it constructs hardware objects
+# at import time (see lib_3dai/kinect.py), so it is NOT imported here. When wiring
+# up real capture, import and initialize hardware *inside* capture() (or behind an
+# explicit function), not at module scope.
 
 # ─────────────────────────── Capture ────────────────────────────
 
