@@ -18,18 +18,23 @@ jobs:
       # Hardware-independent only: there is no Kinect/projector on CI runners,
       # so we test the API, the fake-capture worker, and the pure fringe math.
       - name: Syntax check
-        run: python -m py_compile main.py db.py init_db.py capture_tool.py
+        run: >
+          python -m py_compile
+          main.py db.py init_db.py capture_tool.py artifact_store.py
+          scripts/register_scan_folder.py examples/torres_fetch_scan_3d.py
 
-      - name: Unit test - fringe phase recovery
+      - name: Unit tests - fringe math and artifact files
         run: |
           python -m pip install --upgrade pip
-          pip install numpy imageio
+          pip install numpy imageio requests
           python tests/test_fpp.py
+          python tests/test_artifact_store.py
+          python tests/test_register_scan_folder.py
 
       - name: Prepare host data dir
         # Create it as the runner user first, otherwise the docker bind mount
-        # makes ./data/images root-owned and the host-side worker can't write.
-        run: mkdir -p data/images
+        # can make ./data root-owned and the host-side worker can't write.
+        run: mkdir -p data/images data/ci_artifacts
 
       - name: Build and start API stack
         run: docker compose up -d --build
@@ -48,6 +53,11 @@ jobs:
         run: |
           pip install requests
           python capture_tool.py --steps 3
+
+      - name: Artifact API smoke test
+        run: |
+          pip install requests numpy
+          python tests/test_api_artifacts.py
 
       - name: Tear down
         if: always()

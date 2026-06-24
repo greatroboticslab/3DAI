@@ -31,10 +31,19 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres@db:5432/capture
+      ARTIFACT_ROOT: /app/data
+      API_BIND_ADDR: ${API_BIND_ADDR:-127.0.0.1}
+      API_TOKEN: ${API_TOKEN:-}
+      API_TOKEN_HEADER: ${API_TOKEN_HEADER:-X-API-Token}
+      MAX_SESSION_STEPS: 1000
+      MAX_ARTIFACTS_PER_REQUEST: 100
+      MAX_METADATA_BYTES: 65536
+      MAX_NPZ_ARRAYS: 256
+      MAX_NPY_HEADER_BYTES: 65536
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${API_BIND_ADDR:-127.0.0.1}:8000:8000"
     volumes:
-      - ./data/images:/app/images
+      - ./data:/app/data
 
 volumes:
   postgres_data:

@@ -3,10 +3,10 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:55432/capture")
 
 def run_sql_file(path):
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         sql = f.read()
 
     with psycopg.connect(DATABASE_URL) as conn:

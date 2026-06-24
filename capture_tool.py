@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import base64
 import os
 import sys
 import time
@@ -26,8 +27,20 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8")
 
-API = "http://localhost:8000"
-IMAGE_ROOT = "./data/images"
+API = os.getenv("API_URL", "http://localhost:8000")
+IMAGE_ROOT = os.getenv("IMAGE_ROOT", "./data/images")
+API_TIMEOUT = float(os.getenv("API_TIMEOUT_S", "15"))
+API_TOKEN_HEADER = os.getenv("API_TOKEN_HEADER", "X-API-Token").strip() or "X-API-Token"
+
+FAKE_JPEG_BYTES = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////"
+    "2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/"
+    "8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAA"
+    "AAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/Aaf/xAAUEQEAAAAAAA"
+    "AAAAAAAAAAAAAA/9oACAECAQE/Aaf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Aqf/xAAUEAEAAAAAAAAA"
+    "AAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//"
+    "EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z"
+)
 
 # ─────────────────────────── Capture backends ───────────────────────────
 #
@@ -47,12 +60,19 @@ def fake_capture(session_id: str, step_index: int) -> str:
     path = os.path.abspath(os.path.join(out_dir, f"img_{step_index:03d}.jpg"))
 
     with open(path, "wb") as f:
-        f.write(b"FAKE_IMAGE_PLACEHOLDER")
+        f.write(FAKE_JPEG_BYTES)
 
     return path
 
 
 _kinect = None  # opened once on first real capture, reused across steps
+
+
+def auth_headers() -> dict[str, str]:
+    token = (os.getenv("SCANNER_API_TOKEN") or os.getenv("API_TOKEN") or "").strip()
+    if not token or token.lower() == "string":
+        return {}
+    return {API_TOKEN_HEADER: token}
 
 
 def _get_kinect():
@@ -131,14 +151,23 @@ def kinect_capture(session_id: str, step_index: int, frame_timeout: float = 15.0
 
 def create_session(total_steps: int) -> str:
     """POST /sessions → returns session_id."""
-    res = requests.post(f"{API}/sessions", json={"total_steps": total_steps})
+    res = requests.post(
+        f"{API}/sessions",
+        json={"total_steps": total_steps},
+        headers=auth_headers(),
+        timeout=API_TIMEOUT,
+    )
     res.raise_for_status()
     return res.json()["session_id"]
 
 
 def fetch_steps(session_id: str) -> list:
     """GET /sessions/{id}/steps → returns list of step dicts."""
-    res = requests.get(f"{API}/sessions/{session_id}/steps")
+    res = requests.get(
+        f"{API}/sessions/{session_id}/steps",
+        headers=auth_headers(),
+        timeout=API_TIMEOUT,
+    )
     res.raise_for_status()
     return res.json()
 
@@ -149,13 +178,17 @@ def report_image(session_id: str, step_id: str, file_path: str) -> None:
         "session_id": session_id,
         "step_id": step_id,
         "file_path": file_path,
-    })
+    }, headers=auth_headers(), timeout=API_TIMEOUT)
     res.raise_for_status()
 
 
 def get_session_status(session_id: str) -> dict:
     """GET /sessions/{id} → returns status dict."""
-    res = requests.get(f"{API}/sessions/{session_id}")
+    res = requests.get(
+        f"{API}/sessions/{session_id}",
+        headers=auth_headers(),
+        timeout=API_TIMEOUT,
+    )
     res.raise_for_status()
     return res.json()
 
