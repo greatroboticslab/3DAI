@@ -21,13 +21,15 @@ jobs:
         run: >
           python -m py_compile
           main.py db.py init_db.py capture_tool.py artifact_store.py
-          scripts/register_scan_folder.py examples/torres_fetch_scan_3d.py
+          fpp_tools/temporal_unwrap.py scripts/register_scan_folder.py
+          examples/torres_fetch_scan_3d.py
 
       - name: Unit tests - fringe math and artifact files
         run: |
           python -m pip install --upgrade pip
           pip install numpy imageio requests
           python tests/test_fpp.py
+          python tests/test_temporal_unwrap.py
           python tests/test_artifact_store.py
           python tests/test_register_scan_folder.py
 
