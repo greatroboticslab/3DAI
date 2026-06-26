@@ -17,6 +17,7 @@ from artifact_store import (
     validate_category,
     validate_role,
 )
+import fourdai_client
 from db import get_conn
 
 app = FastAPI()
@@ -622,6 +623,47 @@ def get_sample_scan_3d(sample_id: str):
             sessions = [_scan_package_from_row(cur, row) for row in cur.fetchall()]
 
     return {"sample_id": cleaned, "sessions": sessions}
+
+
+@app.get("/samples/{sample_id}/4d", dependencies=[Depends(require_api_token)])
+def get_sample_4d(sample_id: str):
+    """Return the combined 4D record for a sample id.
+
+    Merges 4DAI context/2D/moisture (from MongoDB) with 3DAI scan sessions and
+    artifacts (from PostgreSQL), joined on the shared sample_id. The 4DAI side
+    is optional: if it is not configured or is unreachable, this still returns
+    the 3D side with ``found.fourdai`` false. Read-only; starts no hardware.
+
+    See docs/4dai_integration.md.
+    """
+    cleaned = _clean_sample_id(sample_id)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, sample_id, status, total_steps, completed_steps, metadata, created_at
+                FROM sessions
+                WHERE sample_id=%s
+                ORDER BY created_at DESC, id DESC
+                """,
+                (cleaned,),
+            )
+            sessions = [_scan_package_from_row(cur, row) for row in cur.fetchall()]
+
+    fourdai_configured = fourdai_client.is_configured()
+    fourdai_record = fourdai_client.fetch_sample(cleaned) if fourdai_configured else None
+
+    return {
+        "sample_id": cleaned,
+        "soil_or_vegetable": fourdai_record,
+        "scan_3d": {"sessions": sessions},
+        "found": {
+            "fourdai": fourdai_record is not None,
+            "threedai": len(sessions) > 0,
+        },
+        "fourdai_configured": fourdai_configured,
+    }
 
 
 @app.get("/artifacts/{artifact_id}", dependencies=[Depends(require_api_token)])
