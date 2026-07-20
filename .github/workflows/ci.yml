@@ -21,6 +21,7 @@ jobs:
         run: >
           python -m py_compile
           main.py db.py init_db.py capture_tool.py artifact_store.py
+          fourdai_client.py
           fpp_tools/temporal_unwrap.py scripts/register_scan_folder.py
           examples/torres_fetch_scan_3d.py
 
@@ -32,6 +33,7 @@ jobs:
           python tests/test_temporal_unwrap.py
           python tests/test_artifact_store.py
           python tests/test_register_scan_folder.py
+          python tests/test_fourdai_client.py
 
       - name: Prepare host data dir
         # Create it as the runner user first, otherwise the docker bind mount

@@ -3,7 +3,9 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:55432/capture")
+# 127.0.0.1, not "localhost": avoids the IPv6 ::1 connect stall against the
+# IPv4-only Docker Postgres port on Windows. See db.py.
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:55432/capture")
 
 def run_sql_file(path):
     with open(path, "r", encoding="utf-8") as f:

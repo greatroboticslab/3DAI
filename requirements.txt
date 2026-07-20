@@ -16,3 +16,8 @@ pyserial>=3.5,<4.0
 Pillow>=12.2,<13.0
 
 opencv-python>=4.13.0.92,<4.14
+
+# Optional: only needed for the 4DAI fusion endpoint (GET /samples/{id}/4d).
+# The API runs fine without it; fourdai_client degrades when pymongo is absent.
+# Install with: pip install "pymongo>=4.6,<5.0"
+# pymongo>=4.6,<5.0
