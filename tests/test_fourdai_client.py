@@ -37,6 +37,9 @@ class FakeDB:
     def __getitem__(self, name):
         return self._collections[name]
 
+    def list_collection_names(self):
+        return list(self._collections)
+
 
 def expect(cond, msg):
     if not cond:
@@ -98,6 +101,48 @@ def test_fetch_sample_falls_back_to_soil():
     expect(rec["image_ids"] == [], "no images is fine")
 
 
+def test_fetch_sample_finds_dynamic_category():
+    db = FakeDB({
+        "images": FakeCollection([
+            {"_id": "img-1", "sample_id": "dyn-1", "image_path": "images/herbs/dyn-1/a.jpg"},
+        ]),
+        "herbs": FakeCollection([
+            {
+                "_id": "dyn-1",
+                "common_name": "basil",
+                "moisture": {"unit": "percent", "value": "31"},
+                "camera_3d_enabled": True,
+            },
+        ]),
+    })
+    rec = fourdai_client.fetch_sample("dyn-1", db=db)
+    expect(rec is not None, "dynamic category found")
+    expect(rec["kind"] == "herbs", "kind is dynamic collection name")
+    expect(rec["category"] == "herbs", "category aliases collection name")
+    expect(rec["record"]["moisture"]["value"] == "31", "dynamic moisture carried")
+    expect(rec["image_ids"] == ["img-1"], "dynamic sample image ids carried")
+    expect(rec["images"][0]["image_path"].endswith("a.jpg"), "image path metadata carried")
+
+
+def test_configured_category_list_is_authoritative():
+    saved = os.environ.get("FOURDAI_CATEGORY_COLLECTIONS")
+    os.environ["FOURDAI_CATEGORY_COLLECTIONS"] = "configured_category"
+    try:
+        db = FakeDB({
+            "vegetable": FakeCollection([{"_id": "same-id", "ignored": True}]),
+            "configured_category": FakeCollection([{"_id": "same-id", "kept": True}]),
+            "images": FakeCollection([]),
+        })
+        rec = fourdai_client.fetch_sample("same-id", db=db)
+        expect(rec is not None and rec["kind"] == "configured_category",
+               "env category list chooses configured collection")
+        expect(rec["record"] == {"kept": True}, "configured collection record used")
+    finally:
+        os.environ.pop("FOURDAI_CATEGORY_COLLECTIONS", None)
+        if saved is not None:
+            os.environ["FOURDAI_CATEGORY_COLLECTIONS"] = saved
+
+
 def test_fetch_sample_missing_returns_none():
     db = FakeDB({
         "vegetable": FakeCollection([]),
@@ -146,6 +191,8 @@ def main():
     test_shape_record_strips_id_and_copies_images()
     test_fetch_sample_finds_vegetable()
     test_fetch_sample_falls_back_to_soil()
+    test_fetch_sample_finds_dynamic_category()
+    test_configured_category_list_is_authoritative()
     test_fetch_sample_missing_returns_none()
     test_fetch_sample_swallows_db_errors()
     test_not_configured_paths()

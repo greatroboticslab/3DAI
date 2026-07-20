@@ -1,19 +1,20 @@
 # scan_3d API Contract
 
 This document describes the read-only 3D scan package exposed by the 3DAI API
-for Torres's GUI and later MongoDB integration. The API returns metadata as JSON
-and exposes large binary artifacts through download URLs. It does not embed raw
-image stacks, depth arrays, or point-cloud data inside JSON responses.
+for the 4DAI workflow. The API returns metadata as JSON and exposes large
+binary artifacts through download URLs. It does not embed raw image stacks,
+depth arrays, or point-cloud data inside JSON responses.
 
 ## Join Key
 
-Torres's GUI should create a `sample_id` and pass it to the scanner API when it
+4DAI FastAPI creates a UUID `sample_id` when Streamlit submits to
+`POST /collection/submission`. Pass that returned id to the scanner API when it
 creates a session:
 
 ```json
 {
   "total_steps": 0,
-  "sample_id": "plant-2026-06-23-001",
+  "sample_id": "0f54282b-785b-452f-b3b8-dc2d9905779b",
   "metadata": {
     "operator": "torres",
     "notes": "matte sample on reference panel"
@@ -165,6 +166,6 @@ Streams the registered file with its stored media type.
 
 ## Binary Policy
 
-Keep large binaries outside JSON. Store them as files under `ARTIFACT_ROOT` for
-this first pass, and later map the same artifact records to Mongo GridFS or path
-references when the shared MongoDB design is finalized.
+Keep large binaries outside JSON. Store scanner artifacts as files under
+`ARTIFACT_ROOT` and return path metadata plus download URLs. 4DAI also prefers
+file paths over GridFS, so path-backed metadata is the shared storage model.

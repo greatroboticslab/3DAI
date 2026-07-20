@@ -69,8 +69,8 @@ class CreateSessionPayload(BaseModel):
     )
     sample_id: Optional[str] = Field(
         default=None,
-        description="Opaque sample join key created by Torres's GUI.",
-        examples=["plant-2026-06-23-001"],
+        description="Opaque sample join key created by 4DAI FastAPI /collection/submission.",
+        examples=["0f54282b-785b-452f-b3b8-dc2d9905779b"],
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
@@ -290,7 +290,7 @@ def create_session(
 
     Body (optional JSON):
         total_steps: int
-        sample_id: optional opaque join key from Torres's GUI
+        sample_id: optional opaque join key from 4DAI
         metadata: optional JSON object for scan/session context
     """
     if payload is None:
@@ -607,7 +607,7 @@ def get_session_scan_3d(session_id: uuid.UUID):
 
 @app.get("/samples/{sample_id}/scan-3d", dependencies=[Depends(require_api_token)])
 def get_sample_scan_3d(sample_id: str):
-    """Return all 3D scan sessions for a Torres sample id, newest first."""
+    """Return all 3D scan sessions for a 4DAI sample id, newest first."""
     cleaned = _clean_sample_id(sample_id)
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -656,6 +656,8 @@ def get_sample_4d(sample_id: str):
 
     return {
         "sample_id": cleaned,
+        "fourdai": fourdai_record,
+        # Backward-compatible alias for the first fusion prototype.
         "soil_or_vegetable": fourdai_record,
         "scan_3d": {"sessions": sessions},
         "found": {
