@@ -102,6 +102,8 @@ def test_fetch_sample_falls_back_to_soil():
 
 
 def test_fetch_sample_finds_dynamic_category():
+    # Document shaped exactly as 4DAI's POST /collection/submission inserts it:
+    # {_id, date, data: {<dynamic context fields keyed by prompt label>}}.
     db = FakeDB({
         "images": FakeCollection([
             {"_id": "img-1", "sample_id": "dyn-1", "image_path": "images/herbs/dyn-1/a.jpg"},
@@ -109,9 +111,12 @@ def test_fetch_sample_finds_dynamic_category():
         "herbs": FakeCollection([
             {
                 "_id": "dyn-1",
-                "common_name": "basil",
-                "moisture": {"unit": "percent", "value": "31"},
-                "camera_3d_enabled": True,
+                "date": "2026-07-20",
+                "data": {
+                    "Common Name": "basil",
+                    "Moisture": "31",
+                    "Health": "Healthy",
+                },
             },
         ]),
     })
@@ -119,9 +124,23 @@ def test_fetch_sample_finds_dynamic_category():
     expect(rec is not None, "dynamic category found")
     expect(rec["kind"] == "herbs", "kind is dynamic collection name")
     expect(rec["category"] == "herbs", "category aliases collection name")
-    expect(rec["record"]["moisture"]["value"] == "31", "dynamic moisture carried")
+    # Dynamic context fields are lifted from `data` to the top of `record`.
+    expect(rec["record"]["Moisture"] == "31", "dynamic moisture lifted from data")
+    expect(rec["record"]["Common Name"] == "basil", "dynamic field lifted from data")
+    expect("data" not in rec["record"], "data envelope is unwrapped, not nested")
+    # Envelope fields (date) are preserved under _meta for provenance.
+    expect(rec["record"]["_meta"]["date"] == "2026-07-20", "date preserved in _meta")
     expect(rec["image_ids"] == ["img-1"], "dynamic sample image ids carried")
     expect(rec["images"][0]["image_path"].endswith("a.jpg"), "image path metadata carried")
+
+
+def test_shape_record_legacy_flat_doc_unchanged():
+    # Legacy vegetable/soil docs have no `data` key; fields stay at the top.
+    doc = {"_id": "soil-1", "soil_type": "clay", "soil_moisture": "3", "date": "2026-06-26"}
+    rec = fourdai_client.shape_record("soil", doc, [])
+    expect(rec["record"]["soil_type"] == "clay", "legacy flat field kept at top")
+    expect(rec["record"]["soil_moisture"] == "3", "legacy moisture kept at top")
+    expect("_meta" not in rec["record"], "no _meta wrapper for legacy flat docs")
 
 
 def test_configured_category_list_is_authoritative():
@@ -192,6 +211,7 @@ def main():
     test_fetch_sample_finds_vegetable()
     test_fetch_sample_falls_back_to_soil()
     test_fetch_sample_finds_dynamic_category()
+    test_shape_record_legacy_flat_doc_unchanged()
     test_configured_category_list_is_authoritative()
     test_fetch_sample_missing_returns_none()
     test_fetch_sample_swallows_db_errors()

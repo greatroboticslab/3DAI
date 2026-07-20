@@ -156,8 +156,28 @@ def shape_record(category: str, doc: dict[str, Any], images: list[Any]) -> dict[
     Mongo. ``category`` is the Mongo collection/category name; ``doc`` is the
     raw Mongo doc; ``images`` are optional image metadata docs or legacy image
     id strings for the sample.
+
+    4DAI's current dynamic-category documents are shaped
+    ``{"_id", "date", "data": {<dynamic context fields>}}`` -- the per-sample
+    context (moisture, common name, etc.) is nested under ``data``. We lift
+    those fields to the top of ``record`` so callers can read
+    ``record["Moisture"]`` directly, and expose ``record["_meta"]`` for the
+    envelope fields (``date`` and anything else outside ``data``). Legacy flat
+    ``vegetable`` / ``soil`` documents with no ``data`` key keep their fields at
+    the top of ``record`` unchanged.
     """
-    fields = {k: v for k, v in doc.items() if k != "_id"}
+    envelope = {k: v for k, v in doc.items() if k not in ("_id", "data")}
+    data = doc.get("data")
+    if isinstance(data, dict):
+        # Dynamic-category shape: dynamic fields come from ``data``; ``date`` and
+        # any other envelope keys are preserved under ``_meta`` for provenance.
+        fields: dict[str, Any] = dict(data)
+        if envelope:
+            fields["_meta"] = envelope
+    else:
+        # Legacy flat shape (vegetable/soil) or a doc with no ``data`` object.
+        fields = envelope
+
     shaped_images = [_shape_image_doc(image) for image in images]
     image_ids = [image["image_id"] for image in shaped_images if "image_id" in image]
     return {

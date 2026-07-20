@@ -8,6 +8,22 @@ API_BIND_ADDR=127.0.0.1
 API_TOKEN=
 API_TOKEN_HEADER=X-API-Token
 SCANNER_API_TOKEN=
+
+# --- 4DAI reverse link (3DAI reads 4DAI's MongoDB to enrich /samples/{id}/4d) ---
+# Leave FOURDAI_MONGO_URL unset to disable the reverse join; /samples/{id}/4d
+# then returns the 3D side only with found.fourdai=false. Read-only.
+FOURDAI_MONGO_URL=
+FOURDAI_DB_NAME=Collections
+# Optional: force the exact category collections to search (CSV). If unset, 3DAI
+# lists Mongo collections and skips images/fs.*/system.* automatically.
+FOURDAI_CATEGORY_COLLECTIONS=
+# Optional: image metadata collection(s) to resolve per-sample images (CSV).
+FOURDAI_IMAGE_COLLECTIONS=images
+# Optional: extra collection names to treat as non-sample (CSV, merged with defaults).
+FOURDAI_NON_SAMPLE_COLLECTIONS=
+# Server-selection timeout so a down Mongo can't hang a request.
+FOURDAI_MONGO_TIMEOUT_MS=1500
+
 MAX_SESSION_STEPS=1000
 MAX_ARTIFACTS_PER_REQUEST=100
 MAX_METADATA_BYTES=65536
