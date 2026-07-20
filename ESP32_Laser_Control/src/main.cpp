@@ -32,6 +32,22 @@
  *   PING                     Connectivity check → PONG
  *   HELP                     Print command reference
  *
+ * LASER (high-power PWM output, separate from the relay channels)
+ * ───────────────────────────────────────────────────────────────
+ *   LASER CONFIG PIN <n> FREQ <hz> MAXDUTY <pct>
+ *                            Set up the laser PWM pin, modulation frequency,
+ *                            and a hard duty ceiling (0-100).
+ *   LASER ARM | LASER DISARM Enable / disable firing. Nonzero duty is refused
+ *                            unless armed. DISARM forces 0% + disarmed.
+ *   LASER SET <pct>          Set duty 0-100 (clamped to MAXDUTY; needs ARM).
+ *   LASER FREQ <hz>          Change modulation frequency.
+ *   LASER OFF                Duty 0 immediately (stays armed).
+ *   LASER STATUS             Report laser configuration + state.
+ *
+ *   Laser safety: boots UNconfigured / disarmed / 0%, is never persisted to
+ *   flash (a reboot can't restore laser output), and auto-disarms to 0% if the
+ *   host stops sending commands for the watchdog timeout.
+ *
  * RESPONSES
  * ──────────
  *   OK                          Success
@@ -59,6 +75,28 @@ static constexpr uint8_t INPUT_ONLY_MAX  = 39;
 // NVS namespace
 static constexpr char NVS_NS[] = "gpio_ctrl";
 
+// ── Laser PWM (LEDC) configuration ─────────────────────────────────────────
+//
+// The laser is driven by a single PWM output on its TTL/white wire. Duty cycle
+// sets average optical power. This is deliberately a SEPARATE subsystem from
+// the relay channels, with its own safety interlocks, because it drives a
+// high-power (5.5 W, 455 nm) laser:
+//   - Boots and idles at 0% duty (off). Always.
+//   - Refuses any nonzero duty unless explicitly ARMed.
+//   - Auto-disarms and drops to 0% if the host goes silent (watchdog).
+//   - Clamps duty to a configurable ceiling so a bad command can't hit 5.5 W.
+//
+// The laser config is intentionally NOT persisted to NVS: on every boot the
+// laser comes up UNconfigured and disarmed, so a power-cycle can never bring
+// the laser back on. It must be reconfigured and rearmed by the host each run.
+static constexpr uint8_t  LASER_LEDC_CHANNEL = 15;   // LEDC channel (0-15)
+static constexpr uint8_t  LASER_PWM_RES_BITS = 8;    // 0-255 duty resolution
+static constexpr uint16_t LASER_PWM_MAX_RAW  = 255;  // (1 << 8) - 1
+static constexpr uint32_t LASER_FREQ_MIN     = 100;      // Hz
+static constexpr uint32_t LASER_FREQ_MAX     = 40000;    // Hz (safe for 8-bit LEDC)
+static constexpr uint32_t LASER_FREQ_DEFAULT = 1000;     // Hz
+static constexpr uint32_t LASER_WATCHDOG_MS  = 2000;     // host-silence timeout
+
 // ── Data model ─────────────────────────────────────────────────────────────
 
 struct Channel {
@@ -69,7 +107,18 @@ struct Channel {
     bool    currentState;  // last state set via SET (or safe on init)
 };
 
+struct Laser {
+    bool     configured;
+    uint8_t  pin;
+    uint32_t freq;         // PWM frequency in Hz
+    uint8_t  maxDutyPct;   // ceiling: SET is clamped to this (0-100)
+    bool     armed;        // must be true before any nonzero duty
+    uint8_t  dutyPct;      // current commanded duty (0-100)
+};
+
 static Channel    channels[MAX_CHANNELS];
+static Laser      laser;
+static uint32_t   lastHostMs = 0;   // millis() of last received command line
 static Preferences prefs;
 static String     inputBuffer;
 
@@ -203,6 +252,53 @@ static void printHelp() {
         "  ch = 1-based channel number (1-");
     Serial.print(MAX_CHANNELS);
     Serial.print(")\r\n");
+    Serial.print(
+        "LASER (high-power output; boots off + disarmed, not persisted)\r\n"
+        "  LASER CONFIG PIN <n> FREQ <hz> MAXDUTY <pct>       Set up laser PWM pin\r\n"
+        "  LASER ARM | LASER DISARM                           Enable/disable firing\r\n"
+        "  LASER SET <pct>                                    Duty 0-100 (needs ARM)\r\n"
+        "  LASER FREQ <hz>                                    Change PWM frequency\r\n"
+        "  LASER OFF                                          Duty 0, stay armed\r\n"
+        "  LASER STATUS                                       Laser state\r\n");
+}
+
+// ── Laser PWM helpers ──────────────────────────────────────────────────────
+
+/** Convert a 0-100 duty percentage to an 8-bit LEDC raw value. */
+static uint32_t laserPctToRaw(uint8_t pct) {
+    if (pct > 100) pct = 100;
+    return (uint32_t)pct * LASER_PWM_MAX_RAW / 100;
+}
+
+/** Write the current commanded duty to hardware, honoring arm + clamp.
+ *  If not configured or not armed, forces 0% regardless of dutyPct. */
+static void laserApply() {
+    if (!laser.configured) return;
+    uint8_t effective = laser.armed ? laser.dutyPct : 0;
+    if (effective > laser.maxDutyPct) effective = laser.maxDutyPct;
+    ledcWrite(LASER_LEDC_CHANNEL, laserPctToRaw(effective));
+}
+
+/** Force the laser fully off (0% duty) immediately. Does not change arm. */
+static void laserForceOff() {
+    laser.dutyPct = 0;
+    if (laser.configured) ledcWrite(LASER_LEDC_CHANNEL, 0);
+}
+
+/** Drop laser to 0% AND disarm. Used by watchdog and on any fault. */
+static void laserSafeShutdown() {
+    laser.armed = false;
+    laserForceOff();
+}
+
+static void printLaserStatus() {
+    if (!laser.configured) {
+        Serial.print("LASER UNCONFIGURED\r\n");
+        return;
+    }
+    Serial.printf("LASER PIN %d FREQ %u MAXDUTY %u ARMED %s DUTY %u\r\n",
+        laser.pin, laser.freq, laser.maxDutyPct,
+        laser.armed ? "YES" : "NO", laser.dutyPct);
 }
 
 // ── Command processor ──────────────────────────────────────────────────────
@@ -271,6 +367,10 @@ static void processCommand(const String& raw) {
         if (pin < 0 || pin > 39)          { Serial.print("ERR PIN_OUT_OF_RANGE\r\n");  return; }
         if (isInputOnly((uint8_t)pin))     { Serial.print("ERR PIN_INPUT_ONLY\r\n");   return; }
         if (pinInUse((uint8_t)pin, ch))   { Serial.print("ERR PIN_IN_USE\r\n");        return; }
+        // Refuse a pin the laser owns (PWM). Don't let a relay steal the laser pin.
+        if (laser.configured && laser.pin == (uint8_t)pin) {
+            Serial.print("ERR PIN_IS_LASER: pin is the laser PWM output\r\n"); return;
+        }
 
         if (strcmp(pol,  "HIGH") != 0 && strcmp(pol,  "LOW") != 0) {
             Serial.print("ERR INVALID_POL: use HIGH or LOW\r\n"); return;
@@ -351,6 +451,110 @@ static void processCommand(const String& raw) {
         return;
     }
 
+    // ── LASER ... ───────────────────────────────────────────────────────────
+    if (u.startsWith("LASER")) {
+        // LASER CONFIG PIN <n> FREQ <hz> MAXDUTY <pct>
+        if (u.startsWith("LASER CONFIG")) {
+            int pin = -1; long freq = 0; int maxduty = -1;
+            int n = sscanf(u.c_str(), "LASER CONFIG PIN %d FREQ %ld MAXDUTY %d",
+                           &pin, &freq, &maxduty);
+            if (n != 3) {
+                Serial.print("ERR SYNTAX: LASER CONFIG PIN <n> FREQ <hz> MAXDUTY <pct>\r\n");
+                return;
+            }
+            if (pin < 0 || pin > 39)        { Serial.print("ERR PIN_OUT_OF_RANGE\r\n"); return; }
+            if (isInputOnly((uint8_t)pin))  { Serial.print("ERR PIN_INPUT_ONLY\r\n");   return; }
+            // Refuse a pin that belongs to a relay channel. A relay is a coil,
+            // digital on/off only; PWMing it makes it screech and can damage it.
+            if (pinInUse((uint8_t)pin, -1)) {
+                Serial.print("ERR PIN_IS_RELAY: remove that relay channel first; relays must not be PWM'd\r\n");
+                return;
+            }
+            if (freq < (long)LASER_FREQ_MIN || freq > (long)LASER_FREQ_MAX) {
+                Serial.print("ERR FREQ_OUT_OF_RANGE\r\n"); return;
+            }
+            if (maxduty < 0 || maxduty > 100) { Serial.print("ERR MAXDUTY_RANGE: 0-100\r\n"); return; }
+
+            // Reconfiguring always starts from a safe state: disarmed, 0%.
+            laserSafeShutdown();
+            laser.configured = true;
+            laser.pin        = (uint8_t)pin;
+            laser.freq       = (uint32_t)freq;
+            laser.maxDutyPct = (uint8_t)maxduty;
+            laser.armed      = false;
+            laser.dutyPct    = 0;
+
+            ledcSetup(LASER_LEDC_CHANNEL, laser.freq, LASER_PWM_RES_BITS);
+            ledcAttachPin(laser.pin, LASER_LEDC_CHANNEL);
+            ledcWrite(LASER_LEDC_CHANNEL, 0);   // start at 0% duty
+            Serial.print("OK\r\n");
+            return;
+        }
+
+        if (u == "LASER ARM") {
+            if (!laser.configured) { Serial.print("ERR LASER_UNCONFIGURED\r\n"); return; }
+            laser.armed = true;
+            laserApply();   // still 0% until SET, but arm is now recorded
+            Serial.print("OK ARMED\r\n");
+            return;
+        }
+
+        if (u == "LASER DISARM") {
+            laserSafeShutdown();
+            Serial.print("OK DISARMED\r\n");
+            return;
+        }
+
+        if (u == "LASER OFF") {
+            laserForceOff();
+            Serial.print("OK\r\n");
+            return;
+        }
+
+        if (u.startsWith("LASER SET")) {
+            int pct = -1;
+            if (sscanf(u.c_str(), "LASER SET %d", &pct) != 1) {
+                Serial.print("ERR SYNTAX: LASER SET <pct>\r\n"); return;
+            }
+            if (!laser.configured) { Serial.print("ERR LASER_UNCONFIGURED\r\n"); return; }
+            if (!laser.armed)      { Serial.print("ERR LASER_NOT_ARMED\r\n");    return; }
+            if (pct < 0 || pct > 100) { Serial.print("ERR DUTY_RANGE: 0-100\r\n"); return; }
+            if (pct > laser.maxDutyPct) {
+                Serial.printf("ERR DUTY_EXCEEDS_MAX: max %u\r\n", laser.maxDutyPct);
+                return;
+            }
+            laser.dutyPct = (uint8_t)pct;
+            laserApply();
+            Serial.print("OK\r\n");
+            return;
+        }
+
+        if (u.startsWith("LASER FREQ")) {
+            long freq = 0;
+            if (sscanf(u.c_str(), "LASER FREQ %ld", &freq) != 1) {
+                Serial.print("ERR SYNTAX: LASER FREQ <hz>\r\n"); return;
+            }
+            if (!laser.configured) { Serial.print("ERR LASER_UNCONFIGURED\r\n"); return; }
+            if (freq < (long)LASER_FREQ_MIN || freq > (long)LASER_FREQ_MAX) {
+                Serial.print("ERR FREQ_OUT_OF_RANGE\r\n"); return;
+            }
+            laser.freq = (uint32_t)freq;
+            ledcSetup(LASER_LEDC_CHANNEL, laser.freq, LASER_PWM_RES_BITS);
+            ledcAttachPin(laser.pin, LASER_LEDC_CHANNEL);
+            laserApply();   // re-apply current duty at the new frequency
+            Serial.print("OK\r\n");
+            return;
+        }
+
+        if (u == "LASER STATUS") {
+            printLaserStatus();
+            return;
+        }
+
+        Serial.print("ERR UNKNOWN_LASER_CMD - type HELP\r\n");
+        return;
+    }
+
     Serial.print("ERR UNKNOWN_COMMAND - type HELP\r\n");
 }
 
@@ -368,6 +572,15 @@ void setup() {
     loadChannels();
     applySafeStates();
 
+    // The laser always comes up UNconfigured, disarmed, 0%. Its config is never
+    // persisted, so a reboot can never restore laser output on its own.
+    laser.configured = false;
+    laser.armed      = false;
+    laser.dutyPct    = 0;
+    laser.freq       = LASER_FREQ_DEFAULT;
+    laser.maxDutyPct = 100;
+    lastHostMs       = millis();
+
     Serial.print("READY\r\n");
 }
 
@@ -377,6 +590,7 @@ void loop() {
 
         if (c == '\n' || c == '\r') {
             if (inputBuffer.length() > 0) {
+                lastHostMs = millis();   // host is alive: pet the laser watchdog
                 processCommand(inputBuffer);
                 inputBuffer = "";
             }
@@ -384,5 +598,16 @@ void loop() {
             inputBuffer += c;
         }
         // Silently discard characters when buffer is full.
+    }
+
+    // Laser watchdog: if the laser is actually emitting (armed and duty > 0)
+    // and the host has gone silent past the timeout, shut the laser down. This
+    // protects against a crashed or disconnected controller leaving the laser
+    // on. Relay channels are intentionally NOT affected by this watchdog.
+    if (laser.configured && laser.armed && laser.dutyPct > 0) {
+        if (millis() - lastHostMs > LASER_WATCHDOG_MS) {
+            laserSafeShutdown();
+            Serial.print("LASER WATCHDOG: host silent, laser disarmed + off\r\n");
+        }
     }
 }

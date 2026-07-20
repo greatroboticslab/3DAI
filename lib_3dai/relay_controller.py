@@ -248,6 +248,54 @@ class RelayController:
         """Return the firmware's built-in help text as a string."""
         return "\n".join(self._send("HELP"))
 
+    # ── Laser PWM control ──────────────────────────────────────────────────
+    #
+    # The laser is a high-power (5.5 W, 455 nm) output driven by PWM on its
+    # TTL wire. The firmware enforces the safety model; these are thin wrappers.
+    # Typical sequence:  laser_config(...) -> laser_arm() -> laser_set(pct) ...
+    #                    -> laser_off() -> laser_disarm().
+    # While firing, keep sending commands (or a periodic laser_status) so the
+    # firmware watchdog does not auto-disarm the laser.
+
+    def laser_config(self, pin: int, freq_hz: int = 1000, max_duty_pct: int = 100) -> bool:
+        """Configure the laser PWM pin, frequency, and hard duty ceiling.
+
+        Leaves the laser disarmed at 0%. Returns True on success.
+        """
+        return self._send_expecting_ok(
+            f"LASER CONFIG PIN {pin} FREQ {freq_hz} MAXDUTY {max_duty_pct}"
+        )
+
+    def laser_arm(self) -> bool:
+        """Arm the laser. Nonzero duty is refused until armed. Returns True on OK."""
+        return self._send_expecting_ok("LASER ARM")
+
+    def laser_disarm(self) -> bool:
+        """Disarm the laser: forces 0% and blocks further firing. Returns True on OK."""
+        return self._send_expecting_ok("LASER DISARM")
+
+    def laser_set(self, duty_pct: int) -> bool:
+        """Set laser duty 0-100 (clamped to the configured max; requires ARM).
+
+        Returns True on success. False if not armed, over the max, or out of range.
+        """
+        return self._send_expecting_ok(f"LASER SET {duty_pct}")
+
+    def laser_freq(self, freq_hz: int) -> bool:
+        """Change the laser PWM/modulation frequency. Returns True on OK."""
+        return self._send_expecting_ok(f"LASER FREQ {freq_hz}")
+
+    def laser_off(self) -> bool:
+        """Immediately set laser duty to 0% (stays armed). Returns True on OK."""
+        return self._send_expecting_ok("LASER OFF")
+
+    def laser_status(self) -> Optional[str]:
+        """Return the raw firmware LASER STATUS line, or None if no response."""
+        for line in self._send("LASER STATUS"):
+            if line.upper().startswith("LASER"):
+                return line
+        return None
+
     # ── Convenience helpers ────────────────────────────────────────────────
 
     def on(self, ch: int) -> bool:
