@@ -31,7 +31,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scanner_system import scanner_db, schema, hardware
 
 # Root under which artifact file_paths are stored, so the GUI can load images.
-STORAGE_ROOT = os.getenv("SCANNER_STORAGE_ROOT", "").strip() or "."
+# Same default as the capture orchestrator, so images written by a capture are
+# found here.
+from scanner_system.capture import STORAGE_ROOT  # noqa: E402
 
 
 st.set_page_config(page_title="Scanner · Material Recognition", page_icon="🔬", layout="wide")
@@ -105,6 +107,9 @@ def _render_sample(s):
         st.success("Label saved.")
         st.rerun()
 
+    # capture a new scan
+    _render_capture(sid)
+
     # scans for this sample
     scans = scanner_db.scans_for_sample(sid, db=db)
     if not scans:
@@ -113,6 +118,40 @@ def _render_sample(s):
 
     for scan in scans:
         _render_scan(scan)
+
+
+def _render_capture(sid):
+    from scanner_system import capture
+
+    with st.expander("📷 Run a capture", expanded=False):
+        mode = st.selectbox(
+            "Mode", list(schema.CAPTURE_MODES), key=f"mode_{sid}",
+            help="full = lasers + kinect (+projector). Fallbacks let you run "
+                 "instruments individually if they interfere.",
+        )
+        chans = st.multiselect(
+            "Laser channels to fire", list(schema.LASER_CHANNELS),
+            default=list(schema.LASER_CHANNELS), key=f"chans_{sid}",
+            help="Which of the 4 lasers to capture the sample under. "
+                 "Each is a different wavelength.",
+        )
+        st.caption(
+            "This drives real hardware: it fires the selected lasers and captures "
+            "a Kinect frame under each. Lasers are turned OFF between shots and at "
+            "the end. If the ESP32/Kinect isn't connected, the scan still records "
+            "what worked and why the rest didn't."
+        )
+        if st.button("▶ Run capture", key=f"cap_{sid}", type="primary"):
+            with st.spinner("Capturing… (firing lasers + grabbing frames)"):
+                pkg = capture.run_capture(sid, mode=mode, laser_channels=chans, db=db)
+            status = pkg.get("status", "?")
+            if status == "complete":
+                st.success(f"Capture complete ({status}).")
+            elif status == "partial":
+                st.warning(f"Capture partial — some instruments failed (see below).")
+            else:
+                st.error(f"Capture {status} — check the per-instrument detail below.")
+            st.rerun()
 
 
 def _render_scan(scan):
