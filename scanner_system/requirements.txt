@@ -1,0 +1,29 @@
+# Pinned dependencies for the scanner material-recognition system.
+# Install into an isolated venv (NOT global Python) to avoid clashing with the
+# lab PC's other tools (gradio/fastapi pin older numpy/starlette):
+#
+#   python -m venv scanner_system/.venv
+#   scanner_system/.venv/Scripts/pip install -r scanner_system/requirements.txt
+#
+# streamlit is held below 1.50 so its starlette requirement stays compatible
+# with the fastapi 0.115 used by the 3DAI API (starlette <0.46).
+
+# GUI + data
+streamlit<1.50
+pymongo>=4,<5
+pandas>=2,<3
+pillow>=10,<12
+
+# imaging / reconstruction (host-side capture + fringe tools)
+numpy>=1.26,<3
+opencv-python-headless>=4.9
+imageio>=2.34
+scipy>=1.12
+matplotlib>=3.8
+
+# ML (material recognition / dataset work)
+scikit-learn>=1.4
+
+# hardware + http (ESP32 serial, scanner API client)
+pyserial>=3.5
+requests>=2.31
