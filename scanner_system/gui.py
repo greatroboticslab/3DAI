@@ -28,7 +28,7 @@ import streamlit as st
 # Allow "streamlit run scanner_system/gui.py" from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scanner_system import scanner_db, schema
+from scanner_system import scanner_db, schema, hardware
 
 # Root under which artifact file_paths are stored, so the GUI can load images.
 STORAGE_ROOT = os.getenv("SCANNER_STORAGE_ROOT", "").strip() or "."
@@ -63,17 +63,7 @@ def _artifact_abs_path(file_path: str) -> str:
 
 st.sidebar.title("🔬 Scanner")
 st.sidebar.caption("Material recognition dataset")
-page = st.sidebar.radio("View", ["Samples", "New sample", "Dataset export"])
-
-db = _db_or_message()
-if db is None:
-    st.stop()
-
-# One-time-ish: make sure indexes exist (cheap, idempotent).
-try:
-    scanner_db.ensure_indexes(db)
-except Exception:
-    pass
+page = st.sidebar.radio("View", ["Samples", "New sample", "Dataset export", "Hardware"])
 
 
 # ── Page: Samples ───────────────────────────────────────────────────────────
@@ -219,9 +209,101 @@ def page_export():
         st.download_button("Download CSV", buf.getvalue(), "dataset.csv", "text/csv")
 
 
-PAGES = {
-    "Samples": page_samples,
-    "New sample": page_new_sample,
-    "Dataset export": page_export,
-}
-PAGES[page]()
+# ── Page: Hardware (status + self-test) ─────────────────────────────────────
+
+def page_hardware():
+    st.header("Hardware")
+    st.caption(
+        "What the software can actually see. If you don't know what's wired, this "
+        "tells you what's connected and responding -- in plain terms."
+    )
+
+    # --- MongoDB ---
+    st.subheader("MongoDB (data store)")
+    m = hardware.probe_mongo()
+    (st.success if m["ok"] else st.error)(m["message"])
+    st.caption(f"`{m['url']}` · db `{m['db']}`")
+
+    # --- Kinect ---
+    st.subheader("Kinect (depth + color camera)")
+    k = hardware.probe_kinect()
+    (st.success if k["ok"] else st.warning)(k["message"])
+
+    # --- ESP32 / lasers ---
+    st.subheader("ESP32 (laser + relay controller)")
+    ports = hardware.list_serial_ports()
+    with st.expander(f"Serial ports seen: {len(ports)}"):
+        for p in ports:
+            st.write(f"- `{p['device']}` — {p['description']}")
+    guess = hardware.likely_esp32_port()
+    if guess is None:
+        st.error(
+            "No ESP32-like board detected on any serial port.\n\n"
+            "Check: is the ESP32 plugged into USB? Is it a **data** cable (not a "
+            "charge-only one)? A charge-only cable powers the board (LED on) but "
+            "shows no port."
+        )
+        return
+    st.info(f"A board that looks like the ESP32 is on `{guess}`.")
+
+    st.warning(
+        "Reading its status opens the serial port, which **resets the board**. "
+        "On reset the firmware drives all relays to their safe (OFF) state first, "
+        "so this is safe."
+    )
+    if st.button("Probe ESP32 (read-only: PING + status)"):
+        with st.spinner(f"Talking to {guess}…"):
+            es = hardware.probe_esp32(guess)
+        st.session_state["esp32"] = es
+
+    es = st.session_state.get("esp32")
+    if es is not None:
+        (st.success if es.connected else st.error)(es.message)
+        if es.connected:
+            if es.channels:
+                st.write("**Relay channels** (each may drive a laser/device):")
+                st.table(es.channels)
+            else:
+                st.info("No relay channels configured on the board.")
+            if es.laser:
+                st.write("**Laser PWM:**", "configured" if es.laser.get("configured") else "not configured")
+                st.caption(f"`{es.laser.get('raw','')}`")
+
+            st.divider()
+            st.subheader("Blink test — find out what's wired")
+            st.caption(
+                "Fire one channel briefly to see if anything physically responds. "
+                "It turns the channel back OFF automatically. **Only do this if it's "
+                "safe for that channel to activate** (e.g. a low-power laser pointed "
+                "somewhere safe, eye protection on if it's a laser)."
+            )
+            chans = [c["ch"] for c in es.channels]
+            if chans:
+                c1, c2, c3 = st.columns([1, 1, 2])
+                ch = c1.selectbox("Channel", chans)
+                secs = c2.slider("Seconds", 0.2, 3.0, 1.0, 0.1)
+                if c3.button(f"⚡ Fire CH{ch} briefly", type="primary"):
+                    with st.spinner(f"Firing CH{ch}…"):
+                        r = hardware.blink_channel(ch, port=guess, seconds=secs)
+                    (st.success if r["ok"] else st.error)(r["message"])
+
+
+# ── Dispatch ────────────────────────────────────────────────────────────────
+
+if page == "Hardware":
+    # The hardware page must work even when Mongo is down (diagnosing that is
+    # part of its job), so it runs before the Mongo gate.
+    page_hardware()
+else:
+    db = _db_or_message()
+    if db is None:
+        st.stop()
+    try:
+        scanner_db.ensure_indexes(db)
+    except Exception:
+        pass
+    {
+        "Samples": page_samples,
+        "New sample": page_new_sample,
+        "Dataset export": page_export,
+    }[page]()
