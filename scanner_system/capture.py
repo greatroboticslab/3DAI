@@ -34,6 +34,40 @@ def _rel(path: str) -> str:
     return os.path.relpath(path, STORAGE_ROOT).replace(os.sep, "/")
 
 
+# Scan-zone crop (fractions x0,y0,x1,y1 of the full Kinect frame). The sample
+# sits where the projector/lasers converge, so a fixed central ROI isolates it
+# and drops the surrounding lab clutter, giving clean, presentable frames.
+# Tune for a rig via SCANNER_SCAN_ROI="x0,y0,x1,y1".
+def _scan_roi() -> tuple[float, float, float, float]:
+    raw = os.getenv("SCANNER_SCAN_ROI", "").strip()
+    if raw:
+        try:
+            x0, y0, x1, y1 = (float(v) for v in raw.split(","))
+            return x0, y0, x1, y1
+        except Exception:
+            pass
+    return 0.24, 0.34, 0.52, 0.64
+
+
+def _crop_to_roi(path: str) -> Optional[int]:
+    """Crop a saved image in place to the scan-zone ROI. Returns new size in
+    bytes, or None on any failure (leaving the full frame untouched)."""
+    try:
+        import cv2
+        img = cv2.imread(path)
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        x0, y0, x1, y1 = _scan_roi()
+        crop = img[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
+        if crop.size == 0:
+            return None
+        cv2.imwrite(path, crop)
+        return os.path.getsize(path)
+    except Exception:
+        return None
+
+
 # The Kinect needs the patched C:/KinectEnv interpreter (has pykinect2); this
 # code runs in the project venv, which does not. So we shell out to a tiny
 # standalone grab script under that interpreter. Override the interpreter path
@@ -161,10 +195,11 @@ def run_capture(
                 rc.set_channel(ch, False)
                 if grab["ok"]:
                     any_ok = True
+                    size = _crop_to_roi(out) or grab.get("size_bytes")
                     scanner_db.register_artifact(
                         scan_id, sample_id, "laser", f"laser_ch{ch}_png",
                         _rel(out), media_type="image/png",
-                        size_bytes=grab.get("size_bytes"),
+                        size_bytes=size,
                         laser_state=schema.build_laser_state(ch, wavelength_nm=wl),
                         db=d)
                 else:
@@ -195,9 +230,10 @@ def run_capture(
         out = os.path.join(scan_dir, "kinect", "color.png")
         grab = _kinect_grab(out)
         if grab["ok"]:
+            size = _crop_to_roi(out) or grab.get("size_bytes")
             scanner_db.register_artifact(
                 scan_id, sample_id, "kinect", "color_png", _rel(out),
-                media_type="image/png", size_bytes=grab.get("size_bytes"), db=d)
+                media_type="image/png", size_bytes=size, db=d)
             scanner_db.record_instrument(scan_id, "kinect", "ok", db=d)
         else:
             scanner_db.record_instrument(scan_id, "kinect", "failed",
@@ -222,10 +258,13 @@ def run_capture(
             white = os.path.join(fringe_dir, "white.png")
             npz = os.path.join(fringe_dir, "scan.npz")
             if proc.returncode == 0 and os.path.isfile(white):
+                # Crop the display photo to the scan zone (the .npz stacks stay
+                # full-frame -- they're for reconstruction, not display).
+                wsize = _crop_to_roi(white) or os.path.getsize(white)
                 scanner_db.register_artifact(
                     scan_id, sample_id, "projector", "fringe_white_png",
                     _rel(white), media_type="image/png",
-                    size_bytes=os.path.getsize(white), db=d)
+                    size_bytes=wsize, db=d)
                 if os.path.isfile(npz):
                     scanner_db.register_artifact(
                         scan_id, sample_id, "projector", "fringe_stack_npz",

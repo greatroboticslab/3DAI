@@ -131,7 +131,7 @@ def _render_capture(sid):
         )
         chans = st.multiselect(
             "Laser channels to fire", list(schema.LASER_CHANNELS),
-            default=list(schema.LASER_CHANNELS), key=f"chans_{sid}",
+            default=[1, 2, 3], key=f"chans_{sid}",  # CH4 diode lead broken; solder fix pending
             help="Which of the 4 lasers to capture the sample under. "
                  "Each is a different wavelength.",
         )
