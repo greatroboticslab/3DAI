@@ -172,15 +172,42 @@ def _render_scan(scan):
 
     # artifacts grouped by modality
     pkg = scanner_db.scan_package(scan["_id"], db=db)
+    has_images = False
     for modality in schema.MODALITIES:
         arts = pkg["artifacts"].get(modality, [])
         if not arts:
             continue
+        has_images = True
         st.markdown(f"*{modality}* ({len(arts)})")
         thumbs = st.columns(4)
         for i, art in enumerate(arts):
             with thumbs[i % 4]:
                 _render_artifact(art)
+
+    # publish this scan into 4DAI (via 4DAI's own public API; 4DAI unchanged)
+    if has_images and status in ("complete", "partial"):
+        _render_publish(scan)
+
+
+def _render_publish(scan):
+    import os
+    fourdai_url = os.getenv("FOURDAI_URL", "http://127.0.0.1:8000")
+    scan_id = scan["_id"]
+    c1, c2 = st.columns([1, 2])
+    if c1.button("⬆ Publish to 4DAI", key=f"pub_{scan_id}"):
+        from scanner_system import push_to_4dai
+        with st.spinner("Pushing scan into 4DAI…"):
+            try:
+                res = push_to_4dai.publish_scan(
+                    scan_id, category=os.getenv("FOURDAI_CATEGORY", "materials"),
+                    fourdai_url=fourdai_url, db=db)
+                st.success(
+                    f"Published to 4DAI: sample `{res['fourdai_sample_id'][:8]}`, "
+                    f"{len(res['uploaded_images'])} images. Viewable in 4DAI's UI.")
+            except Exception as exc:
+                st.error(f"Publish failed: {exc}  (is 4DAI up at {fourdai_url}?)")
+    c2.caption(f"Pushes this scan's images into 4DAI at `{fourdai_url}` "
+               "using 4DAI's public API — 4DAI code is not modified.")
 
 
 def _render_artifact(art):
