@@ -65,7 +65,7 @@ def _artifact_abs_path(file_path: str) -> str:
 
 st.sidebar.title("🔬 Scanner")
 st.sidebar.caption("Material recognition dataset")
-page = st.sidebar.radio("View", ["Samples", "New sample", "Dataset export", "Hardware"])
+page = st.sidebar.radio("View", ["Capture", "Samples", "Dataset export", "Hardware"])
 
 
 # ── Page: Samples ───────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ def page_samples():
     st.header("Samples")
     samples = scanner_db.list_samples(db=db)
     if not samples:
-        st.info("No samples yet. Create one from **New sample**.")
+        st.info("No samples yet. Run one from the **Capture** page.")
         return
 
     # material filter
@@ -225,27 +225,74 @@ def _render_artifact(art):
         st.caption(f"{cap}\n\n`{art.get('file_path','')}`")
 
 
-# ── Page: New sample ────────────────────────────────────────────────────────
+# ── Page: Capture (the main workflow) ───────────────────────────────────────
 
-def page_new_sample():
-    st.header("New sample")
-    with st.form("new_sample"):
-        label = st.text_input("Label", placeholder="e.g. oak plank #3")
-        c1, c2 = st.columns(2)
-        cls = c1.text_input("Material class", placeholder="e.g. wood")
-        sub = c2.text_input("Subclass", placeholder="e.g. oak")
-        notes = st.text_area("Notes / context", placeholder="anything worth recording")
-        submitted = st.form_submit_button("Create sample")
-    if submitted:
-        if not label.strip():
-            st.error("Label is required.")
+_MODE_LABELS = {
+    "full": "Full AIO — 3D (projector) + multispectral lasers + Kinect",
+    "kinect_projector": "3D (projector) + Kinect, no lasers",
+    "laser_only": "Multispectral lasers only",
+    "kinect_only": "Kinect RGB-D only",
+    "projector_only": "Structured-light 3D only",
+}
+
+
+def page_capture():
+    st.header("📷 New Capture")
+    st.caption("Scan a sample across the three modalities: **structured-light 3D** "
+               "(projector), **multispectral lasers** (per-wavelength), and **Kinect** "
+               "RGB-D. Everything lands in MongoDB, grouped by modality.")
+
+    # 1. Sample: new or existing
+    st.subheader("1 · Sample")
+    existing = scanner_db.list_samples(db=db)
+    which = st.radio("Sample", ["Create new", "Use existing"], horizontal=True,
+                     label_visibility="collapsed")
+    label = cls = sub = None
+    sid = None
+    if which == "Create new":
+        c1, c2, c3 = st.columns(3)
+        label = c1.text_input("Label", placeholder="e.g. oak plank #3")
+        cls = c2.text_input("Material class", placeholder="wood")
+        sub = c3.text_input("Subclass", placeholder="oak")
+    else:
+        if not existing:
+            st.info("No samples yet — switch to **Create new**.")
             return
-        sid = scanner_db.create_sample(
-            label.strip(), material_class=cls or None, material_subclass=sub or None,
-            context={"notes": notes} if notes else None, db=db,
-        )
-        st.success(f"Created sample `{sid}`.")
-        st.caption("Capture scans against this sample_id from the capture script.")
+        opts = {f"{s.get('label','?')}  ·  {(s.get('material') or {}).get('class') or 'unlabeled'}"
+                f"  ·  {s['_id'][:8]}": s["_id"] for s in existing}
+        sid = opts[st.selectbox("Existing sample", list(opts))]
+
+    # 2. What to run
+    st.subheader("2 · What to capture")
+    mode = st.selectbox("Mode", list(schema.CAPTURE_MODES),
+                        format_func=lambda m: _MODE_LABELS.get(m, m))
+    chans = st.multiselect(
+        "Laser wavelengths (channels)", list(schema.LASER_CHANNELS), default=[1, 2, 3],
+        help="Each channel is a different wavelength. CH4's diode lead is broken "
+             "(solder fix pending).")
+    st.caption("⚠️ The laser stage fires real lasers (goggles on, safe beam). The "
+               "projector goes black during it so the lasers are the only light.")
+
+    # 3. Run
+    st.subheader("3 · Run")
+    if st.button("▶ Run capture", type="primary", use_container_width=True):
+        if which == "Create new":
+            if not (label or "").strip():
+                st.error("Label is required to create a sample.")
+                return
+            sid = scanner_db.create_sample(
+                label.strip(), material_class=cls or None, material_subclass=sub or None, db=db)
+        from scanner_system import capture
+        with st.spinner("Capturing… a full scan takes ~a minute (fringe + lasers + Kinect)."):
+            pkg = capture.run_capture(sid, mode=mode, laser_channels=chans, db=db)
+        status = pkg.get("status")
+        emit = {"complete": st.success, "partial": st.warning}.get(status, st.error)
+        emit(f"Capture {status} — scan `{pkg['_id'][:8]}` for sample `{sid[:8]}`.")
+        for inst, r in (pkg.get("results") or {}).items():
+            mark = {"ok": "🟢", "failed": "🔴", "skipped": "⚪"}.get(r.get("status"), "•")
+            st.write(f"{mark} **{inst}** — {r.get('status')}"
+                     + (f"  ·  {r.get('detail')}" if r.get("detail") else ""))
+        st.info(f"Open **Samples → {sid[:8]}** to view the images and publish to 4DAI.")
 
 
 # ── Page: Dataset export ────────────────────────────────────────────────────
@@ -385,7 +432,7 @@ else:
     except Exception:
         pass
     {
+        "Capture": page_capture,
         "Samples": page_samples,
-        "New sample": page_new_sample,
         "Dataset export": page_export,
     }[page]()
