@@ -77,3 +77,6 @@ dmypy.json
 # data
 # =========================
 data
+
+# captured scan data (images/npz on disk, not in git)
+scanner_data/

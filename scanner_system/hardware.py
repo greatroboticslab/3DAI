@@ -27,7 +27,26 @@ from typing import Any, Optional
 
 CP210X_HINTS = ("cp210", "silicon labs", "usb-serial", "ch340", "uart")
 
+# Interpreter that can actually talk to the Kinect (has pykinect2). Real grabs
+# run here, not in the GUI's venv. Keep in sync with capture.KINECT_PYTHON.
+KINECT_PYTHON = os.getenv("SCANNER_KINECT_PYTHON", "").strip() or r"C:\KinectEnv\Scripts\python.exe"
+
 _relay_controller_cls = None
+
+
+def _connect_with_retry(rc, attempts: int = 3) -> bool:
+    """Try to connect to the ESP32 a few times. The port can be briefly held by
+    another action (a capture just finished) or the board mid-reset; a couple of
+    retries turns a transient miss into a success instead of 'no response'."""
+    import time as _t
+    for i in range(attempts):
+        try:
+            if rc.connect():
+                return True
+        except Exception:
+            pass
+        _t.sleep(0.8)
+    return False
 
 
 def _load_relay_controller():
@@ -120,9 +139,10 @@ def probe_esp32(port: Optional[str] = None) -> Esp32Status:
 
     rc = RelayController(port)
     try:
-        if not rc.connect():
-            st.message = (f"Found {port} but no response to PING. The board may need "
-                          "our firmware, or be in a bad state -- try replugging.")
+        if not _connect_with_retry(rc):
+            st.message = (f"Found {port} but no response to PING after retries. The "
+                          "port may be busy (a capture running?), or the board needs "
+                          "a replug.")
             return st
         st.connected = True
         # relay channels
@@ -173,8 +193,8 @@ def blink_channel(ch: int, port: Optional[str] = None, seconds: float = 1.0) -> 
 
     rc = RelayController(port)
     try:
-        if not rc.connect():
-            result["message"] = f"No response on {port}."
+        if not _connect_with_retry(rc):
+            result["message"] = f"No response on {port} after retries (port busy or board needs replug)."
             return result
         # make sure it's a configured channel before firing
         status = rc.get_channel(ch)
@@ -218,24 +238,68 @@ def probe_mongo() -> dict[str, Any]:
                            "`docker run -d -p 127.0.0.1:27017:27017 mongo:7`."}
 
 
-# ── Kinect presence (very light touch; does NOT initialize the sensor) ───────
+# ── Windows device presence (asks the OS what's actually plugged in) ─────────
+
+def _pnp_present(pattern: str) -> list[dict[str, str]]:
+    """Return present PnP devices whose name/id matches ``pattern`` (regex).
+
+    Asks Windows directly, so it reflects what's ACTUALLY connected right now --
+    not what libraries happen to be installed in this interpreter. Returns a list
+    of {status, name}; empty if none present or the query fails.
+    """
+    import subprocess
+    ps = (
+        "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | "
+        f"Where-Object {{ $_.FriendlyName -match '{pattern}' -or $_.InstanceId -match '{pattern}' }} | "
+        "ForEach-Object { \"$($_.Status)|$($_.FriendlyName)\" }"
+    )
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                             capture_output=True, text=True, timeout=12)
+    except Exception:
+        return []
+    rows = []
+    for line in (out.stdout or "").splitlines():
+        line = line.strip()
+        if "|" in line:
+            status, name = line.split("|", 1)
+            rows.append({"status": status.strip(), "name": name.strip()})
+    return rows
+
 
 def probe_kinect() -> dict[str, Any]:
-    """Report whether the Kinect *software stack* is installed.
+    """Report whether the Kinect V2 is actually connected to this PC.
 
-    Intentionally does NOT initialize the sensor (that needs the C:\\KinectEnv
-    interpreter and can power the device). It only checks whether pykinect2 is
-    importable, so the panel can say 'Kinect support present/absent' honestly.
+    Asks Windows whether the Kinect sensor device is present (not whether some
+    library is installed). Also confirms the capture interpreter exists, since
+    real grabs run under C:\\KinectEnv. Does NOT initialize the sensor.
     """
-    try:
-        import importlib.util
-        spec = importlib.util.find_spec("pykinect2")
-        if spec is None:
-            return {"ok": False,
-                    "message": "pykinect2 not installed in this interpreter. Real "
-                               "Kinect capture runs under C:\\KinectEnv."}
-        return {"ok": True,
-                "message": "pykinect2 is importable. Sensor not initialized here "
-                           "(that happens only during a real capture)."}
-    except Exception as exc:
-        return {"ok": False, "message": f"Kinect check failed: {exc}"}
+    devices = _pnp_present(r"Xbox NUI Sensor|Kinect|VID_045E")
+    present = [d for d in devices if d["status"].upper() == "OK"]
+    interp_ok = os.path.isfile(KINECT_PYTHON)
+    if present:
+        names = ", ".join(sorted({d["name"] for d in present}))
+        msg = f"Connected: {names}."
+        msg += "" if interp_ok else f"  (capture interpreter missing: {KINECT_PYTHON})"
+        return {"ok": bool(interp_ok), "present": True, "interpreter_ok": interp_ok,
+                "message": msg}
+    if devices:
+        return {"ok": False, "present": True, "interpreter_ok": interp_ok,
+                "message": f"Kinect detected but not ready (status "
+                           f"{devices[0]['status']}). Check power brick + USB3."}
+    return {"ok": False, "present": False, "interpreter_ok": interp_ok,
+            "message": "Kinect not detected on USB. Check it's powered (needs its "
+                       "power brick) and on a USB3 port."}
+
+
+def probe_projector() -> dict[str, Any]:
+    """Report whether the DLP projector is connected (as a second display)."""
+    devices = _pnp_present(r"DLP4500|DLP|LightCrafter")
+    present = [d for d in devices if d["status"].upper() == "OK"]
+    if present:
+        names = ", ".join(sorted({d["name"] for d in present}))
+        return {"ok": True, "present": True,
+                "message": f"Connected as a display: {names}."}
+    return {"ok": False, "present": False,
+            "message": "Projector (DLP) not detected as a display. Check the HDMI "
+                       "cable and that it's powered on."}

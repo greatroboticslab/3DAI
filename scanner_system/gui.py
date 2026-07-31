@@ -266,7 +266,23 @@ def page_hardware():
     # --- Kinect ---
     st.subheader("Kinect (depth + color camera)")
     k = hardware.probe_kinect()
-    (st.success if k["ok"] else st.warning)(k["message"])
+    (st.success if k.get("present") else st.error)(k["message"])
+    if k.get("present") and st.button("Test Kinect capture (grab a live frame)"):
+        import tempfile
+        out = os.path.join(tempfile.gettempdir(), "kinect_hwtest.png")
+        with st.spinner("Grabbing a frame from the Kinect…"):
+            from scanner_system import capture
+            r = capture._kinect_grab(out)
+        if r["ok"] and os.path.isfile(out):
+            st.success("Live frame captured — the Kinect is delivering.")
+            st.image(out, caption="Live Kinect color frame", use_container_width=True)
+        else:
+            st.error(f"Grab failed: {r['detail']}")
+
+    # --- Projector ---
+    st.subheader("Projector (DLP structured-light)")
+    pj = hardware.probe_projector()
+    (st.success if pj["ok"] else st.error)(pj["message"])
 
     # --- ESP32 / lasers ---
     st.subheader("ESP32 (laser + relay controller)")

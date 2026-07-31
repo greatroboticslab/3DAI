@@ -34,38 +34,65 @@ def _rel(path: str) -> str:
     return os.path.relpath(path, STORAGE_ROOT).replace(os.sep, "/")
 
 
-def _kinect_grab(out_path: str) -> dict[str, Any]:
-    """Capture one Kinect color frame to out_path. Returns {ok, detail, ...}.
+# The Kinect needs the patched C:/KinectEnv interpreter (has pykinect2); this
+# code runs in the project venv, which does not. So we shell out to a tiny
+# standalone grab script under that interpreter. Override the interpreter path
+# with SCANNER_KINECT_PYTHON if it lives elsewhere.
+KINECT_PYTHON = os.getenv("SCANNER_KINECT_PYTHON", "").strip() or r"C:\KinectEnv\Scripts\python.exe"
+_GRAB_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kinect_grab_once.py")
+_PROJECT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_solid.py")
 
-    Uses the real Kinect via capture_tool's runtime. Never raises; a missing
-    sensor or driver comes back as ok=False with a reason.
+
+def _start_projector_black():
+    """Launch a background process that holds the projector fully black.
+
+    Returns the Popen handle (or None if it couldn't start). Used during the
+    laser stage so the lasers are the only light. Import-local so a missing
+    display never breaks a capture.
     """
+    # Use the KinectEnv interpreter: it has GUI-capable OpenCV (the project venv
+    # ships headless OpenCV, which can't open a window).
+    import subprocess
     try:
-        import numpy as np
-        import cv2
-    except Exception as exc:
-        return {"ok": False, "detail": f"numpy/cv2 unavailable: {exc}"}
-    try:
-        import capture_tool
-        kinect = capture_tool._get_kinect()
-    except Exception as exc:
-        return {"ok": False, "detail": f"Kinect not available: {exc}"}
+        return subprocess.Popen([KINECT_PYTHON, _PROJECT_SCRIPT, "0", "120"])
+    except Exception:
+        return None
 
-    color = None
-    deadline = time.time() + 15.0
-    while time.time() < deadline and color is None:
-        if kinect.has_new_color_frame():
-            cf = kinect.get_last_color_frame()
-            h, w = kinect.color_frame_desc.Height, kinect.color_frame_desc.Width
-            color = cf.reshape((h, w, 4))
-        time.sleep(0.03)
-    if color is None:
-        return {"ok": False, "detail": "Kinect delivered no frame in 15s "
-                                       "(check power brick + USB3)."}
+
+def _stop_projector(proc):
+    if proc is not None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+
+def _kinect_grab(out_path: str) -> dict[str, Any]:
+    """Capture one Kinect color frame to out_path via the KinectEnv interpreter.
+
+    Returns {ok, detail, size_bytes?}. Never raises; a missing interpreter,
+    sensor, or driver comes back as ok=False with a plain-language reason.
+    """
+    import subprocess
+
+    if not os.path.isfile(KINECT_PYTHON):
+        return {"ok": False, "detail": f"Kinect interpreter not found at {KINECT_PYTHON} "
+                                       "(set SCANNER_KINECT_PYTHON)."}
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    cv2.imwrite(out_path, color[:, :, :3])
-    return {"ok": True, "detail": "captured",
-            "size_bytes": os.path.getsize(out_path)}
+    try:
+        proc = subprocess.run(
+            [KINECT_PYTHON, _GRAB_SCRIPT, out_path],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "detail": "Kinect grab timed out (30s)."}
+    except Exception as exc:
+        return {"ok": False, "detail": f"Kinect grab failed to launch: {exc}"}
+
+    tail = (proc.stdout or "").strip().splitlines()[-1:] or [""]
+    if proc.returncode == 0 and os.path.isfile(out_path):
+        return {"ok": True, "detail": "captured", "size_bytes": os.path.getsize(out_path)}
+    return {"ok": False, "detail": tail[0] or (proc.stderr or "").strip()[-200:] or "Kinect grab failed."}
 
 
 def run_capture(
@@ -102,6 +129,10 @@ def run_capture(
 
     # ── Laser modality: capture the sample under each laser ─────────────────
     if wants_laser:
+        # Projector to BLACK for the whole laser stage so the lasers are the only
+        # light on the sample (its normal image otherwise washes the scene out).
+        projector = _start_projector_black()
+        time.sleep(0.8)  # let the black window come up before firing
         RelayController = hardware._load_relay_controller()
         rc = None
         try:
@@ -154,6 +185,7 @@ def run_capture(
                 except Exception:
                     pass
                 rc.disconnect()
+            _stop_projector(projector)  # restore the projector
     elif mode in ("full", "laser_only"):
         scanner_db.record_instrument(scan_id, "laser", "skipped",
                                      detail="no laser channels selected", db=d)
@@ -171,11 +203,43 @@ def run_capture(
             scanner_db.record_instrument(scan_id, "kinect", "failed",
                                          detail=grab["detail"], db=d)
 
-    # ── Projector / fringe (separate pipeline; recorded as skipped for now) ──
+    # ── Projector / fringe: structured-light 3D stage ───────────────────────
+    # Projects a multi-frequency fringe sequence and captures each with the
+    # Kinect (both need the KinectEnv interpreter, so it runs there). We register
+    # the white-illumination photo and the fringe stack; 3D reconstruction is a
+    # separate step and needs current calibration.
     if wants_projector:
-        scanner_db.record_instrument(
-            scan_id, "projector", "skipped",
-            detail="fringe capture pipeline not wired into this demo yet", db=d)
+        import subprocess
+        fringe_dir = os.path.join(scan_dir, "fringe")
+        cap_script = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "scan_test", "capture_multifreq.py")
+        maxval = os.getenv("SCANNER_PROJECTOR_MAXVAL", "180")  # bright room default
+        try:
+            proc = subprocess.run(
+                [KINECT_PYTHON, cap_script, fringe_dir, str(maxval)],
+                capture_output=True, text=True, timeout=180)
+            white = os.path.join(fringe_dir, "white.png")
+            npz = os.path.join(fringe_dir, "scan.npz")
+            if proc.returncode == 0 and os.path.isfile(white):
+                scanner_db.register_artifact(
+                    scan_id, sample_id, "projector", "fringe_white_png",
+                    _rel(white), media_type="image/png",
+                    size_bytes=os.path.getsize(white), db=d)
+                if os.path.isfile(npz):
+                    scanner_db.register_artifact(
+                        scan_id, sample_id, "projector", "fringe_stack_npz",
+                        _rel(npz), media_type="application/x-npz",
+                        size_bytes=os.path.getsize(npz), db=d)
+                scanner_db.record_instrument(scan_id, "projector", "ok", db=d)
+            else:
+                detail = (proc.stderr or proc.stdout or "").strip()[-200:] or "fringe capture failed"
+                scanner_db.record_instrument(scan_id, "projector", "failed", detail=detail, db=d)
+        except subprocess.TimeoutExpired:
+            scanner_db.record_instrument(scan_id, "projector", "failed",
+                                         detail="fringe capture timed out (180s)", db=d)
+        except Exception as exc:
+            scanner_db.record_instrument(scan_id, "projector", "failed", detail=str(exc), db=d)
 
     scanner_db.finish_scan(scan_id, db=d)
     return scanner_db.scan_package(scan_id, db=d)
