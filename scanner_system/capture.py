@@ -177,8 +177,9 @@ def run_capture(
                 raise RuntimeError("no ESP32 serial port found (is it plugged in "
                                    "with a data cable?)")
             rc = RelayController(p)
-            if not rc.connect():
-                raise RuntimeError(f"no response from ESP32 on {p}")
+            if not hardware._connect_with_retry(rc, attempts=6):
+                raise RuntimeError(f"no response from ESP32 on {p} "
+                                   "(port busy or board resetting)")
 
             any_ok = False
             for ch in laser_channels:

@@ -163,6 +163,12 @@ def record_instrument(scan_id, instrument, status, detail="", extra=None, db=Non
     scan = d["scans"].find_one({"_id": scan_id})
     if scan is not None:
         overall = schema.resolve_scan_status(scan.get("results", {}))
+        # Don't report "complete" mid-scan: more stages may still run. A caller
+        # polling for completion should only see "complete" once finish_scan is
+        # called. Surface "partial"/"failed" immediately, but hold "complete" as
+        # "running" until the scan is actually finished.
+        if overall == "complete":
+            overall = "running"
         d["scans"].update_one({"_id": scan_id}, {"$set": {"status": overall}})
 
 
