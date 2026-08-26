@@ -73,6 +73,21 @@ static constexpr size_t   CMD_BUF_SIZE   = 160;
 static constexpr uint8_t INPUT_ONLY_MIN  = 34;
 static constexpr uint8_t INPUT_ONLY_MAX  = 39;
 
+// Pins this firmware must NEVER drive, because driving them breaks the board's
+// own ability to be talked to or recovered:
+//   0      bootstrap/IO0. Driving it defeats the auto-reset-into-bootloader
+//          circuit, so esptool can no longer enter download mode by itself
+//          ("Wrong boot mode detected (0x13)") and the button must be held.
+//   1, 3   UART0 TX/GND console. Driving GPIO3 turns the serial RECEIVE pin
+//          into an output, so the board can still print but can never be
+//          commanded again. Recovering it needs a physical NVS erase.
+//   6-11   SPI flash. Driving these hangs the chip outright.
+// This is not theoretical: a stray CONFIG put channel 1 on GPIO3 and left the
+// rig unreachable from 2026-08-13 to 2026-08-26.
+static bool isReservedPin(uint8_t pin) {
+    return pin == 0 || pin == 1 || pin == 3 || (pin >= 6 && pin <= 11);
+}
+
 // NVS namespace
 static constexpr char NVS_NS[] = "gpio_ctrl";
 
@@ -194,7 +209,26 @@ static void loadChannels() {
         channels[i].configured = prefs.getBool(key, false);
         if (channels[i].configured) {
             snprintf(key, sizeof(key), "c%dp", i);
-            channels[i].pin = prefs.getUChar(key, 0);
+            // 255 is an out-of-range sentinel: a MISSING pin key must not be
+            // read as GPIO0. getUChar's old default of 0 silently produced a
+            // valid-looking channel on the bootstrap pin.
+            uint8_t storedPin = prefs.getUChar(key, 255);
+
+            // NEVER trust NVS. A corrupted or stale entry here is applied
+            // before the host can say anything, so a bad pin can lock the
+            // board out permanently. Refuse it and leave the channel
+            // unconfigured; the host can re-CONFIG it over a working link.
+            if (storedPin > 39 || isInputOnly(storedPin) || isReservedPin(storedPin)) {
+                channels[i].configured = false;
+                Serial.print("WARN CH");
+                Serial.print(i + 1);
+                Serial.print(" REJECTED_STORED_PIN ");
+                Serial.print(storedPin);
+                Serial.print(" (reserved/invalid; channel left unconfigured)\r\n");
+                continue;
+            }
+
+            channels[i].pin = storedPin;
             snprintf(key, sizeof(key), "c%da", i);
             channels[i].activeHigh = prefs.getBool(key, true);
             snprintf(key, sizeof(key), "c%ds", i);
@@ -368,6 +402,7 @@ static void processCommand(const String& raw) {
         if (ch < 0 || ch >= MAX_CHANNELS) { Serial.print("ERR INVALID_CHANNEL\r\n");   return; }
         if (pin < 0 || pin > 39)          { Serial.print("ERR PIN_OUT_OF_RANGE\r\n");  return; }
         if (isInputOnly((uint8_t)pin))     { Serial.print("ERR PIN_INPUT_ONLY\r\n");   return; }
+        if (isReservedPin((uint8_t)pin))  { Serial.print("ERR PIN_RESERVED: 0/1/3 are boot+console, 6-11 are SPI flash\r\n"); return; }
         if (pinInUse((uint8_t)pin, ch))   { Serial.print("ERR PIN_IN_USE\r\n");        return; }
         // Refuse a pin the laser owns (PWM). Don't let a relay steal the laser pin.
         if (laser.configured && laser.pin == (uint8_t)pin) {
@@ -501,6 +536,9 @@ static void processCommand(const String& raw) {
             }
             if (pin < 0 || pin > 39)        { Serial.print("ERR PIN_OUT_OF_RANGE\r\n"); return; }
             if (isInputOnly((uint8_t)pin))  { Serial.print("ERR PIN_INPUT_ONLY\r\n");   return; }
+            if (isReservedPin((uint8_t)pin)) {
+                Serial.print("ERR PIN_RESERVED: 0/1/3 are boot+console, 6-11 are SPI flash\r\n"); return;
+            }
             // Refuse a pin that belongs to a relay channel. A relay is a coil,
             // digital on/off only; PWMing it makes it screech and can damage it.
             if (pinInUse((uint8_t)pin, -1)) {
