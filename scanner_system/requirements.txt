@@ -13,6 +13,7 @@ streamlit<1.50
 pymongo>=4,<5
 pandas>=2,<3
 pillow>=10,<12
+plotly>=5.18,<7          # interactive 3D height-map surface in the GUI
 
 # imaging / reconstruction (host-side capture + fringe tools)
 numpy>=1.26,<3
@@ -27,3 +28,7 @@ scikit-learn>=1.4
 # hardware + http (ESP32 serial, scanner API client)
 pyserial>=3.5
 requests>=2.31
+
+# spreadsheet manifests (pandas needs an engine to read/write .xlsx at all).
+# Pure Python, no dependencies, so it cannot disturb the streamlit<1.50 pin.
+openpyxl>=3.1
