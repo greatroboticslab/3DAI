@@ -334,9 +334,24 @@ class RelayController:
 
     def print_status(self) -> None:
         """Print a human-readable status table to stdout."""
-        channels = self.status()
+        lines = self._send("STATUS")
+        channels = [s for s in (_parse_status_line(ln) for ln in lines)
+                    if s is not None]
         if not channels:
-            print("No channels configured.")
+            # "Zero channels parsed" has two very different causes, and
+            # conflating them costs real debugging time: the board may have an
+            # empty table, or we may not be talking to this firmware at all.
+            # This firmware answers a genuinely empty table with the exact
+            # string "NO CHANNELS CONFIGURED"; anything else means an
+            # unrecognized build (e.g. a bare diagnostic firmware), which must
+            # not be reported as "empty".
+            if any("NO CHANNELS CONFIGURED" in ln.upper() for ln in lines):
+                print("No channels configured.")
+            else:
+                print("WARNING: unrecognized reply to STATUS. This may not be "
+                      "the 3DAI relay firmware.")
+                print(f"  raw reply: {lines!r}")
+                print("  Send HELP to identify which build is on the board.")
             return
         print(f"{'CH':<4} {'PIN':<5} {'POL':<5} {'SAFE':<6} {'STATE':<6}")
         print("-" * 30)
