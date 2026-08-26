@@ -129,6 +129,75 @@ def _kinect_grab(out_path: str) -> dict[str, Any]:
     return {"ok": False, "detail": tail[0] or (proc.stderr or "").strip()[-200:] or "Kinect grab failed."}
 
 
+def _reconstruct_height(scan_id, sample_id, fringe_dir, repo_root, d):
+    """Robust wrapped-phase 3D reconstruction of a fringe capture -> height map.
+
+    Best-effort post-process: subtracts the canonical empty-stage reference and
+    maps delta phase through the current calibration (env SCANNER_FRINGE_REFERENCE
+    / SCANNER_HEIGHT_CALIB, defaulting to the 2026-07-31 MAXVAL-20 refit). The
+    median object height is metric; the per-pixel map tilts with the projector's
+    shallow angle (see calib_new report). Never raises -- capture already stands
+    on its own if reconstruction is unavailable.
+    """
+    import subprocess
+
+    calib_dir = os.path.join(repo_root, "data", "scan_test", "calib_new")
+    ref_dir = os.getenv("SCANNER_FRINGE_REFERENCE", os.path.join(calib_dir, "ref20"))
+    calib_txt = os.getenv("SCANNER_HEIGHT_CALIB",
+                          os.path.join(calib_dir, "calibration_temporal_20260731.txt"))
+    recon_script = os.path.join(repo_root, "data", "scan_test", "reconstruct_height.py")
+    # Every exit below records a "reconstruction" instrument result. This used to
+    # return silently and swallow every exception, so a scan could report
+    # projector=ok and status=complete while containing no 3D data at all, with
+    # the subprocess stderr captured and then discarded. Six scans on 2026-07-31
+    # did exactly that (they predated the calibration), and the only way to find
+    # out was comparing file timestamps by hand. Reconstruction is still
+    # best-effort and still never raises; it is just no longer invisible.
+    if not os.path.isfile(os.path.join(ref_dir, "scan.npz")):
+        scanner_db.record_instrument(
+            scan_id, "reconstruction", "skipped",
+            detail=f"no fringe reference at {ref_dir}", db=d)
+        return
+    if not os.path.isfile(calib_txt):
+        scanner_db.record_instrument(
+            scan_id, "reconstruction", "skipped",
+            detail=f"no height calibration at {calib_txt}", db=d)
+        return
+    try:
+        proc = subprocess.run(
+            [KINECT_PYTHON, recon_script, fringe_dir, ref_dir, calib_txt, fringe_dir],
+            capture_output=True, text=True, timeout=120)
+        hnpy = os.path.join(fringe_dir, "height_mm.npy")
+        hpng = os.path.join(fringe_dir, "height_mm.png")
+        if proc.returncode != 0 or not os.path.isfile(hnpy):
+            # Surface why. stderr is the only explanation that exists.
+            why = (proc.stderr or proc.stdout or "").strip().splitlines()
+            scanner_db.record_instrument(
+                scan_id, "reconstruction", "failed",
+                detail=(why[-1][:300] if why
+                        else f"reconstruct_height.py exited {proc.returncode}, no height_mm.npy"),
+                db=d)
+            return
+        scanner_db.register_artifact(
+            scan_id, sample_id, "fusion", "height_map_npy",
+            _rel(hnpy), media_type="application/x-npy",
+            size_bytes=os.path.getsize(hnpy), db=d)
+        if os.path.isfile(hpng):
+            scanner_db.register_artifact(
+                scan_id, sample_id, "fusion", "height_map_png",
+                _rel(hpng), media_type="image/png",
+                size_bytes=os.path.getsize(hpng), db=d)
+        scanner_db.record_instrument(scan_id, "reconstruction", "ok", db=d)
+    except subprocess.TimeoutExpired:
+        scanner_db.record_instrument(
+            scan_id, "reconstruction", "failed",
+            detail="reconstruct_height.py timed out (120s)", db=d)
+    except Exception as exc:
+        scanner_db.record_instrument(
+            scan_id, "reconstruction", "failed",
+            detail=f"{type(exc).__name__}: {exc}"[:300], db=d)
+
+
 def run_capture(
     sample_id: str,
     mode: str = "full",
@@ -248,10 +317,11 @@ def run_capture(
     if wants_projector:
         import subprocess
         fringe_dir = os.path.join(scan_dir, "fringe")
-        cap_script = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "scan_test", "capture_multifreq.py")
-        maxval = os.getenv("SCANNER_PROJECTOR_MAXVAL", "180")  # bright room default
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cap_script = os.path.join(repo_root, "data", "scan_test", "capture_multifreq.py")
+        # MAXVAL 20 is the calibrated exposure: higher values overexpose the
+        # Kinect and wash the fringe to near-zero contrast (height reads 0).
+        maxval = os.getenv("SCANNER_PROJECTOR_MAXVAL", "20")
         try:
             proc = subprocess.run(
                 [KINECT_PYTHON, cap_script, fringe_dir, str(maxval)],
@@ -271,6 +341,7 @@ def run_capture(
                         scan_id, sample_id, "projector", "fringe_stack_npz",
                         _rel(npz), media_type="application/x-npz",
                         size_bytes=os.path.getsize(npz), db=d)
+                    _reconstruct_height(scan_id, sample_id, fringe_dir, repo_root, d)
                 scanner_db.record_instrument(scan_id, "projector", "ok", db=d)
             else:
                 detail = (proc.stderr or proc.stdout or "").strip()[-200:] or "fringe capture failed"
