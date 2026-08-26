@@ -203,6 +203,22 @@ class RelayController:
         """
         return self._send_expecting_ok(f"SET {ch} {'ON' if state else 'OFF'}")
 
+    def set_channels(self, chs, state: bool) -> bool:
+        """
+        Drive several channels to the SAME state in ONE firmware command (SETM),
+        so they switch together instead of staggering across separate SET
+        round-trips.
+
+        Returns True if the firmware acknowledged. Returns False on older
+        firmware that lacks SETM (it replies ERR), so a caller can fall back to
+        per-channel set_channel().
+        """
+        chs = [int(c) for c in chs]
+        if not chs:
+            return True
+        csv = ",".join(str(c) for c in chs)
+        return self._send_expecting_ok(f"SETM {csv} {'ON' if state else 'OFF'}")
+
     def get_channel(self, ch: int) -> Optional[ChannelStatus]:
         """
         Query a single channel.

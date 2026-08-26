@@ -24,6 +24,7 @@
  *       SAFE : output state applied on boot and when SAFE command issued
  *
  *   SET <ch> <ON|OFF>        Drive a channel ON or OFF
+ *   SETM <ch,ch,...> <ON|OFF>  Drive several channels together (one command)
  *   GET <ch>                 Report a single channel's configuration + state
  *   STATUS                   Report all configured channels
  *   SAFE                     Drive all channels to their safe states now
@@ -242,6 +243,7 @@ static void printHelp() {
         "COMMANDS\r\n"
         "  CONFIG <ch> PIN <n> POL <HIGH|LOW> SAFE <ON|OFF>  Configure a channel\r\n"
         "  SET <ch> <ON|OFF>                                  Drive output state\r\n"
+        "  SETM <ch,ch,...> <ON|OFF>                          Drive several together\r\n"
         "  GET <ch>                                           Single channel status\r\n"
         "  STATUS                                             All configured channels\r\n"
         "  SAFE                                               Drive all to safe state\r\n"
@@ -413,6 +415,41 @@ static void processCommand(const String& raw) {
             Serial.print("ERR INVALID_STATE: use ON or OFF\r\n"); return;
         }
         applyState(ch, strcmp(state, "ON") == 0);
+        Serial.print("OK\r\n");
+        return;
+    }
+
+    // ── SETM <ch,ch,...> <ON|OFF> ────────────────────────────────────────────
+    // Drive several channels to the SAME state in one command so they switch
+    // together, instead of staggering across separate SET round-trips. Every
+    // channel is validated before ANY pin moves; then all pins are written
+    // back-to-back (microseconds apart) so the outputs change effectively
+    // simultaneously.
+    if (u.startsWith("SETM ")) {
+        char list[80] = {}, state[8] = {};
+        if (sscanf(u.c_str(), "SETM %79s %7s", list, state) != 2) {
+            Serial.print("ERR SYNTAX: SETM <ch,ch,...> <ON|OFF>\r\n");
+            return;
+        }
+        bool on;
+        if      (strcmp(state, "ON")  == 0) on = true;
+        else if (strcmp(state, "OFF") == 0) on = false;
+        else { Serial.print("ERR INVALID_STATE: use ON or OFF\r\n"); return; }
+
+        int idx[MAX_CHANNELS];
+        int count = 0;
+        for (char* tok = strtok(list, ","); tok != nullptr; tok = strtok(nullptr, ",")) {
+            int ch = atoi(tok) - 1;
+            if (ch < 0 || ch >= MAX_CHANNELS || !channels[ch].configured) {
+                Serial.print("ERR INVALID_CHANNEL\r\n"); return;
+            }
+            if (count >= MAX_CHANNELS) { Serial.print("ERR TOO_MANY\r\n"); return; }
+            idx[count++] = ch;
+        }
+        if (count == 0) { Serial.print("ERR SYNTAX: SETM <ch,ch,...> <ON|OFF>\r\n"); return; }
+
+        for (int i = 0; i < count; i++) channels[idx[i]].currentState = on;
+        for (int i = 0; i < count; i++) writePin(idx[i]);   // back-to-back = together
         Serial.print("OK\r\n");
         return;
     }
