@@ -272,3 +272,28 @@ def test_export_dataset_carries_angle():
     assert by_path["b.png"]["angle_index"] == 2
     assert by_path["b.png"]["angle_count"] == 2
     assert by_path["a.png"]["scan_id"] == scan1
+
+
+def test_scan_known_height_stored_and_validated():
+    assert schema.build_scan("s1")["known_height_mm"] is None
+    assert schema.build_scan("s1", known_height_mm=9.5)["known_height_mm"] == 9.5
+    for bad in (0.05, 500):
+        try:
+            schema.build_scan("s1", known_height_mm=bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad} should have been rejected")
+
+
+def test_anchor_fit_constrained():
+    from scanner_system.calibrate_from_anchors import fit_constrained
+    import numpy as np
+    # synthetic anchors on a known curve height = 0.2*d^2 - 25*d
+    ds = [-0.1, -0.4, -0.9, -1.5]
+    anchors = [{"dphi": d, "known_height_mm": 0.2*d*d - 25*d} for d in ds]
+    a, b = fit_constrained(anchors)
+    assert abs(a - 0.2) < 1e-6 and abs(b + 25) < 1e-6
+    # single anchor degrades to a line through the origin
+    a, b = fit_constrained([{"dphi": -1.0, "known_height_mm": 25.0}])
+    assert a == 0.0 and abs(b + 25.0) < 1e-9

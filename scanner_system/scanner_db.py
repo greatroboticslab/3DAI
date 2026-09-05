@@ -142,11 +142,12 @@ def list_samples(db=None, limit: int = 200) -> list[dict[str, Any]]:
 
 # ── Scans ───────────────────────────────────────────────────────────────────
 
-def start_scan(sample_id, mode="full", operator=None, notes="", angle=None, db=None) -> str:
+def start_scan(sample_id, mode="full", operator=None, notes="", angle=None,
+               known_height_mm=None, db=None) -> str:
     """Start a scan for a sample in the given capture mode; returns scan_id."""
     d = get_db(db)
     doc = schema.build_scan(sample_id, mode=mode, operator=operator, notes=notes,
-                            angle=angle)
+                            angle=angle, known_height_mm=known_height_mm)
     d["scans"].insert_one(doc)
     return doc["_id"]
 

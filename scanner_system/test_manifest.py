@@ -302,3 +302,15 @@ def test_aggregate_multi_pose():
 
     agg = manifest._aggregate([_pose("failed", detail="a"), _pose("failed", detail="b")])
     assert agg["status"] == "failed"
+
+
+def test_validate_row_known_height():
+    assert manifest.validate_row({"label": "x"}, 2)["known_height_mm"] is None
+    assert manifest.validate_row({"label": "x", "known_height_mm": "12.5"}, 2)["known_height_mm"] == 12.5
+    for bad, why in (("0.1", "range"), ("500", "range"), ("thicc", "number")):
+        try:
+            manifest.validate_row({"label": "x", "known_height_mm": bad}, 5)
+        except manifest.ManifestError as exc:
+            assert "row 5" in str(exc)
+        else:
+            raise AssertionError(f"known_height_mm={bad!r} should have been rejected ({why})")

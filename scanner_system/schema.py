@@ -147,6 +147,7 @@ def build_scan(
     operator: Optional[str] = None,
     notes: str = "",
     angle: Optional[dict[str, int]] = None,
+    known_height_mm: Optional[float] = None,
     scan_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build a ``scans`` document for one capture session of a sample.
@@ -159,6 +160,12 @@ def build_scan(
     ``{"index": k, "count": n}`` meaning pose k of n for this sample. None
     means single-pose. Stored structured rather than in ``notes`` so dataset
     export can carry it as a queryable field per training row.
+
+    ``known_height_mm`` makes the scan a calibration-anchor candidate: the
+    object's caliper-measured height as placed for THIS scan. Dual-purpose
+    collection: flat matte objects contribute to the height-calibration fit
+    while being collected. Per-scan, not per-sample, because a rotated object
+    has a different height; the manifest applies it to pose 1 only.
     """
     if mode not in CAPTURE_MODES:
         raise ValueError(f"unknown capture mode {mode!r}; use one of {CAPTURE_MODES}")
@@ -167,6 +174,12 @@ def build_scan(
         if not (1 <= idx <= cnt):
             raise ValueError(f"angle index/count out of order: {angle!r}")
         angle = {"index": idx, "count": cnt}
+    if known_height_mm is not None:
+        known_height_mm = float(known_height_mm)
+        if not (0.2 <= known_height_mm <= 200.0):
+            raise ValueError(
+                f"known_height_mm {known_height_mm} outside the plausible "
+                "0.2-200 mm anchor range (caliper typo?)")
     now = _now()
     return {
         "_id": scan_id or new_id(),
@@ -176,6 +189,7 @@ def build_scan(
         "operator": operator,
         "notes": notes,
         "angle": angle,
+        "known_height_mm": known_height_mm,
         # requested vs. actual, per instrument, so the GUI can show honest state.
         "results": {},          # e.g. {"kinect": {"status":"ok"}, "laser": {...}}
         "started_at": now,

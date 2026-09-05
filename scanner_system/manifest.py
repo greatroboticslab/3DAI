@@ -64,6 +64,9 @@ ENTRY_COLUMNS = [
     "mode",              # one of schema.CAPTURE_MODES, default "full"
     "laser_channels",    # e.g. "1,2,3". Blank = default channels.
     "angles",            # poses per object, e.g. 3 = scan at 3 orientations. Blank = 1.
+    "known_height_mm",   # caliper height of a FLAT MATTE object as placed for pose 1.
+                         # Fill only for flat-topped objects: it becomes a
+                         # calibration anchor. Blank = not an anchor.
     "operator",          # who ran it. Supported end to end, never captured by the GUI.
     "notes",             # freeform, lands on the scan document
 ]
@@ -161,6 +164,19 @@ def validate_row(row: dict[str, Any], number: int) -> dict[str, Any]:
     else:
         angles = 1
 
+    height_txt = _clean(row.get("known_height_mm"))
+    if height_txt:
+        try:
+            known_height_mm = float(height_txt)
+        except ValueError:
+            raise ManifestError(
+                f"row {number}: known_height_mm {height_txt!r} is not a number")
+        if not (0.2 <= known_height_mm <= 200.0):
+            raise ManifestError(
+                f"row {number}: known_height_mm must be 0.2-200, got {known_height_mm}")
+    else:
+        known_height_mm = None
+
     return {
         "row_number": number,
         "sample_id": _clean(row.get("sample_id")) or None,
@@ -170,6 +186,7 @@ def validate_row(row: dict[str, Any], number: int) -> dict[str, Any]:
         "mode": mode,
         "laser_channels": channels,
         "angles": angles,
+        "known_height_mm": known_height_mm,
         "operator": _clean(row.get("operator")) or None,
         "notes": _clean(row.get("notes")),
         "status": _clean(row.get("status")),
@@ -292,7 +309,7 @@ def write_template(path: str, rows: int = 25) -> str:
 
     # One example row, clearly marked so nobody scans it by accident.
     ws.append(["", "EXAMPLE - delete this row", "wood", "oak", "full", "1,2,3",
-               "3", "your name", "example notes"])
+               "3", "12.5", "your name", "flat matte block, calipered"])
     ws.cell(row=2, column=2).font = Font(italic=True, color="999999")
 
     wb.save(path)
@@ -489,6 +506,10 @@ def run_manifest(
                 operator=row["operator"],
                 angle={"index": k, "count": n_angles} if n_angles > 1 else None,
                 notes=row["notes"],
+                # The caliper height describes the object as placed for pose 1;
+                # a rotated object has a different height, so later poses are
+                # dataset-only, never anchors.
+                known_height_mm=row["known_height_mm"] if k == 1 else None,
                 db=db,
             )
             summaries.append(_summarize(pkg))
