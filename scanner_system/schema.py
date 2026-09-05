@@ -57,7 +57,10 @@ LASER_CHANNELS = (1, 2, 3, 4)
 # "530 ish", CH3 "near infrared, maybe 940", not sure of any of them), and
 # they agree with the bench: CH1/CH2 read red-dominant, CH4 reads G+190.
 #
-# CH3 being NEAR-INFRARED explains everything observed about it: to the eye
+# CH3 is CONFIRMED near-infrared (2026-09-05: a phone's front camera, which
+# has a weak IR-cut filter, picked up its spot easily while the eye barely
+# saw it; no visible laser behaves that way). The exact wavelength is still
+# nominal. Being NIR explains everything observed about it: to the eye
 # it is a faint glow (only the diode's visible tail), and to the Kinect COLOR
 # camera it is a smudge, because that sensor is filtered for visible light.
 # Its real signal needs the Kinect's INFRARED stream (sensitive near 860 nm),
@@ -70,7 +73,7 @@ LASER_CHANNELS = (1, 2, 3, 4)
 LASER_WAVELENGTHS_NM = {
     1: 635,    # nominal: red pointer ("630-40" per PI), unlabeled module
     2: 635,    # nominal: red pointer ("630-40" per PI), unlabeled module
-    3: 940,    # nominal: near-infrared ("maybe 940" per PI); is_ir() -> True
+    3: 940,    # CONFIRMED NIR by phone-camera test; 940 itself nominal ("maybe 940" per PI)
     4: 530,    # nominal: green pointer ("530 ish" per PI), unlabeled module
 }
 
