@@ -34,10 +34,14 @@ def _rel(path: str) -> str:
     return os.path.relpath(path, STORAGE_ROOT).replace(os.sep, "/")
 
 
-# Scan-zone crop (fractions x0,y0,x1,y1 of the full Kinect frame). The sample
-# sits where the projector/lasers converge, so a fixed central ROI isolates it
-# and drops the surrounding lab clutter, giving clean, presentable frames.
-# Tune for a rig via SCANNER_SCAN_ROI="x0,y0,x1,y1".
+# Scan-zone crop (fractions x0,y0,x1,y1 of the full Kinect frame).
+#
+# CURRENTLY UNUSED BY CAPTURE - deliberate, 2026-09-05, operator decision:
+# every artifact saves FULL FRAME. Cropping was tried at three different
+# tightnesses against a moved camera and a keystoned, re-tilted projector, and
+# each time it amputated something someone cared about. Full frame loses
+# nothing and downstream can always crop; these helpers stay for tools that
+# want a display crop (proof sheets, GUI thumbnails).
 #
 # The default is MEASURED, not guessed, and must be re-measured whenever the
 # Kinect or projector moves. Method that actually works: take a fringe
@@ -349,7 +353,7 @@ def run_capture(
         out = os.path.join(scan_dir, "kinect", "color.png")
         grab = _kinect_grab(out)
         if grab["ok"]:
-            size = _crop_to_roi(out) or grab.get("size_bytes")
+            size = grab.get("size_bytes") or os.path.getsize(out)
             scanner_db.register_artifact(
                 scan_id, sample_id, "kinect", "color_png", _rel(out),
                 media_type="image/png", size_bytes=size, db=d)
@@ -378,9 +382,7 @@ def run_capture(
             white = os.path.join(fringe_dir, "white.png")
             npz = os.path.join(fringe_dir, "scan.npz")
             if proc.returncode == 0 and os.path.isfile(white):
-                # Crop the display photo to the scan zone (the .npz stacks stay
-                # full-frame -- they're for reconstruction, not display).
-                wsize = _crop_to_roi(white) or os.path.getsize(white)
+                wsize = os.path.getsize(white)
                 scanner_db.register_artifact(
                     scan_id, sample_id, "projector", "fringe_white_png",
                     _rel(white), media_type="image/png",
