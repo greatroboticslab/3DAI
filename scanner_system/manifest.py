@@ -363,6 +363,7 @@ def run_manifest(
     path: str,
     limit: Optional[int] = None,
     rescan: bool = False,
+    prompt: bool = False,
     db=None,
 ) -> dict[str, Any]:
     """Scan every pending row of a manifest, writing results back as we go.
@@ -393,10 +394,22 @@ def run_manifest(
     print(f"manifest: {len(rows)} rows, {len(pending)} to scan"
           + (f", {skipped} already complete" if skipped else ""))
 
-    done, failed = 0, 0
+    done, failed, skipped_live = 0, 0, 0
     for i, row in enumerate(pending, start=1):
         label = row["label"]
         print(f"\n[{i}/{len(pending)}] row {row['row_number']}: {label}")
+
+        if prompt:
+            # Collection pacing: a person has to physically place each object.
+            # This is the "system prompts the collector for each object" flow;
+            # without it every row scans back-to-back and nobody can swap
+            # objects between rows.
+            answer = input(f">>> Place {label!r} on the stage, then press Enter "
+                           "(or type 's' to skip this row): ").strip().lower()
+            if answer in ("s", "skip"):
+                print("    skipped by collector")
+                skipped_live += 1
+                continue
 
         sample_id = row["sample_id"]
         if not sample_id:
@@ -432,9 +445,10 @@ def run_manifest(
         else:
             failed += 1
 
-    print(f"\ndone: {done} complete, {failed} partial/failed, {skipped} skipped")
-    return {"total": len(rows), "scanned": len(pending),
-            "complete": done, "problem": failed, "skipped": skipped}
+    print(f"\ndone: {done} complete, {failed} partial/failed, "
+          f"{skipped + skipped_live} skipped")
+    return {"total": len(rows), "scanned": len(pending) - skipped_live,
+            "complete": done, "problem": failed, "skipped": skipped + skipped_live}
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────
@@ -457,6 +471,8 @@ def main(argv=None) -> int:
     p_r.add_argument("--limit", type=int, default=None)
     p_r.add_argument("--rescan", action="store_true",
                      help="also re-scan rows already marked complete")
+    p_r.add_argument("--prompt", action="store_true",
+                     help="pause before each row so the collector can place the object")
 
     args = ap.parse_args(argv)
 
@@ -479,7 +495,8 @@ def main(argv=None) -> int:
             return 0
 
         if args.cmd == "run":
-            run_manifest(args.path, limit=args.limit, rescan=args.rescan)
+            run_manifest(args.path, limit=args.limit, rescan=args.rescan,
+                         prompt=args.prompt)
             return 0
     except ManifestError as exc:
         print(f"ERR {exc}")
