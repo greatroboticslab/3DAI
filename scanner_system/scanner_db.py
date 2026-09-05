@@ -273,6 +273,10 @@ def export_dataset(material_class=None, modality=None, db=None) -> list[dict[str
                 "sample_id": sample["_id"],
                 "material_class": mat.get("class"),
                 "material_subclass": mat.get("subclass"),
+                # Surface-property ground truth from the manifest, so the
+                # laser scatter features can be validated against a label.
+                "surface": (sample.get("context") or {}).get("surface"),
+                "transparency": (sample.get("context") or {}).get("transparency"),
                 "modality": art.get("modality"),
                 "role": art.get("role"),
                 "wavelength_nm": (art.get("laser_state") or {}).get("wavelength_nm"),

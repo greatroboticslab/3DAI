@@ -297,3 +297,13 @@ def test_anchor_fit_constrained():
     # single anchor degrades to a line through the origin
     a, b = fit_constrained([{"dphi": -1.0, "known_height_mm": 25.0}])
     assert a == 0.0 and abs(b + 25.0) < 1e-9
+
+
+def test_export_dataset_carries_surface_ground_truth():
+    db = FakeDB()
+    sid = scanner_db.create_sample("blk", material_class="metal",
+                                   context={"surface": "glossy", "transparency": "opaque"}, db=db)
+    scan = scanner_db.start_scan(sid, db=db)
+    scanner_db.register_artifact(scan, sid, "laser", "laser_ch1_png", "m.png", db=db)
+    row = scanner_db.export_dataset(db=db)[0]
+    assert row["surface"] == "glossy" and row["transparency"] == "opaque"

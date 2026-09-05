@@ -114,7 +114,8 @@ def test_xlsx_template_round_trip():
         assert rows[0]["row_number"] == 2       # header is row 1
         parsed = manifest.validate_row(rows[0], rows[0]["row_number"])
         assert parsed["material_class"] == "wood"
-        assert parsed["laser_channels"] == [1, 2, 3]
+        assert parsed["laser_channels"] == [1, 2, 3, 4]   # blank = all four
+        assert parsed["surface"] == "matte" and parsed["transparency"] == "opaque"
     finally:
         os.path.isfile(path) and os.unlink(path)
 
@@ -182,7 +183,9 @@ def test_xlsx_write_back_targets_the_right_row():
         from openpyxl import load_workbook
         wb = load_workbook(path)
         ws = wb.active
-        ws.append(["", "second sample", "", "", "full", "", "", ""])   # row 3
+        second = {c: "" for c in manifest.ALL_COLUMNS}
+        second.update({"label": "second sample", "mode": "full"})
+        ws.append([second[c] for c in manifest.ALL_COLUMNS])   # row 3
         wb.save(path)
 
         manifest.write_results(path, 3, _RESULTS)
@@ -203,7 +206,7 @@ def test_csv_write_back_round_trip():
     try:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(",".join(manifest.ALL_COLUMNS) + "\n")
-            fh.write("," + "oak" + "," * (len(manifest.ALL_COLUMNS) - 2) + "\n")
+            fh.write("oak" + "," * (len(manifest.ALL_COLUMNS) - 1) + "\n")   # label is column 1
         manifest.write_results(path, 2, _RESULTS)
         rows = manifest.read_manifest(path)
         assert rows[0]["scan_id"] == "scan-1"
@@ -314,3 +317,24 @@ def test_validate_row_known_height():
             assert "row 5" in str(exc)
         else:
             raise AssertionError(f"known_height_mm={bad!r} should have been rejected ({why})")
+
+
+# ── Surface-property ground truth ────────────────────────────────────────────
+
+def test_validate_row_surface_and_transparency():
+    row = manifest.validate_row({"label": "x"}, 2)
+    assert row["surface"] is None and row["transparency"] is None
+    row = manifest.validate_row({"label": "x", "surface": " Glossy ", "transparency": "OPAQUE"}, 2)
+    assert row["surface"] == "glossy" and row["transparency"] == "opaque"   # normalized
+    for col, bad in (("surface", "shiny"), ("transparency", "clear")):
+        try:
+            manifest.validate_row({"label": "x", col: bad}, 6)
+        except manifest.ManifestError as exc:
+            assert "row 6" in str(exc) and bad in str(exc)
+        else:
+            raise AssertionError(f"{col}={bad!r} should have been rejected")
+
+
+def test_blank_channels_means_all_four():
+    # A collector who leaves laser_channels empty must get the green laser too.
+    assert manifest.validate_row({"label": "x"}, 2)["laser_channels"] == [1, 2, 3, 4]

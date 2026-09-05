@@ -56,20 +56,34 @@ from . import schema
 # owned by the scanner and overwritten on every run; a human editing them will
 # just have their edits replaced.
 
+# Ordered by what the collector must think about. The first block is the
+# material science: the labels the model trains on and the ground truth that
+# validates what the lasers measure. The second block is capture control and
+# bookkeeping; every column there has a sensible default and may be left blank.
 ENTRY_COLUMNS = [
-    "sample_id",         # blank = mint a new one. Fill it to reuse/pin an id.
     "label",             # REQUIRED. Freeform, e.g. "oak plank #3"
     "material_class",    # ML target, e.g. "wood"
     "material_subclass",  # ML target, e.g. "oak"
-    "mode",              # one of schema.CAPTURE_MODES, default "full"
-    "laser_channels",    # e.g. "1,2,3". Blank = default channels.
+    "surface",           # matte / glossy / textured / mixed. Ground truth for the
+                         # laser scatter feature (tight halo = glossy, wide = matte).
+    "transparency",      # opaque / translucent / transparent. Ground truth for
+                         # subsurface scatter (the wide glow under a laser spot).
     "angles",            # poses per object, e.g. 3 = scan at 3 orientations. Blank = 1.
     "known_height_mm",   # caliper height of a FLAT MATTE object as placed for pose 1.
                          # Fill only for flat-topped objects: it becomes a
                          # calibration anchor. Blank = not an anchor.
-    "operator",          # who ran it. Supported end to end, never captured by the GUI.
     "notes",             # freeform, lands on the scan document
+    "sample_id",         # blank = mint a new one. Fill it to reuse/pin an id.
+    "mode",              # one of schema.CAPTURE_MODES. Blank = "full".
+    "laser_channels",    # e.g. "1,2,4". Blank = ALL FOUR.
+    "operator",          # who ran it. Bookkeeping only; blank is fine.
 ]
+
+# Controlled vocabularies for the surface-property labels. Free text here is
+# how "Oak", "oak" and "oak " became three material classes; these are
+# validated so the ground truth stays groupable.
+SURFACE_FINISHES = ("matte", "glossy", "textured", "mixed")
+TRANSPARENCIES = ("opaque", "translucent", "transparent")
 
 RESULT_COLUMNS = [
     "scan_id",
@@ -85,7 +99,10 @@ RESULT_COLUMNS = [
 
 ALL_COLUMNS = ENTRY_COLUMNS + RESULT_COLUMNS
 
-DEFAULT_LASER_CHANNELS = [1, 2, 3]
+# Blank laser_channels means every laser. This used to be [1, 2, 3], which
+# silently dropped the green channel for any collector who left the cell
+# empty; for material recognition the green flood is the reflectance probe.
+DEFAULT_LASER_CHANNELS = [1, 2, 3, 4]
 # A row is considered done and is skipped on re-run only when it reached this.
 # "partial" and "failed" rows are retried, which is usually what you want after
 # fixing whatever was wrong at the bench.
@@ -164,6 +181,15 @@ def validate_row(row: dict[str, Any], number: int) -> dict[str, Any]:
     else:
         angles = 1
 
+    surface = _clean(row.get("surface")).lower() or None
+    if surface and surface not in SURFACE_FINISHES:
+        raise ManifestError(
+            f"row {number}: surface {surface!r} is not one of {list(SURFACE_FINISHES)}")
+    transparency = _clean(row.get("transparency")).lower() or None
+    if transparency and transparency not in TRANSPARENCIES:
+        raise ManifestError(
+            f"row {number}: transparency {transparency!r} is not one of {list(TRANSPARENCIES)}")
+
     height_txt = _clean(row.get("known_height_mm"))
     if height_txt:
         try:
@@ -183,6 +209,8 @@ def validate_row(row: dict[str, Any], number: int) -> dict[str, Any]:
         "label": label,
         "material_class": _clean(row.get("material_class")) or None,
         "material_subclass": _clean(row.get("material_subclass")) or None,
+        "surface": surface,
+        "transparency": transparency,
         "mode": mode,
         "laser_channels": channels,
         "angles": angles,
@@ -295,22 +323,26 @@ def write_template(path: str, rows: int = 25) -> str:
         ws.column_dimensions[get_column_letter(col)].width = max(14, len(name) + 3)
     ws.freeze_panes = "A2"
 
-    # Dropdown for mode, so a typo cannot reach the capture layer.
-    mode_col = get_column_letter(ALL_COLUMNS.index("mode") + 1)
-    dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(schema.CAPTURE_MODES) + '"',
-        allow_blank=True,
-        showErrorMessage=True,
-    )
-    dv.error = "Pick a capture mode from the list."
-    ws.add_data_validation(dv)
-    dv.add(f"{mode_col}2:{mode_col}{rows + 1}")
+    # Dropdowns on every controlled-vocabulary column, so a typo cannot reach
+    # the capture layer or split a class label into three spellings.
+    for column, vocab, err in (
+        ("surface", SURFACE_FINISHES, "Pick a surface finish from the list."),
+        ("transparency", TRANSPARENCIES, "Pick a transparency from the list."),
+        ("mode", schema.CAPTURE_MODES, "Pick a capture mode from the list."),
+    ):
+        col = get_column_letter(ALL_COLUMNS.index(column) + 1)
+        dv = DataValidation(type="list", formula1='"' + ",".join(vocab) + '"',
+                            allow_blank=True, showErrorMessage=True)
+        dv.error = err
+        ws.add_data_validation(dv)
+        dv.add(f"{col}2:{col}{rows + 1}")
 
-    # One example row, clearly marked so nobody scans it by accident.
-    ws.append(["", "EXAMPLE - delete this row", "wood", "oak", "full", "1,2,3",
-               "3", "12.5", "your name", "flat matte block, calipered"])
-    ws.cell(row=2, column=2).font = Font(italic=True, color="999999")
+    # One example row, clearly marked so nobody scans it by accident. Column
+    # order matches ENTRY_COLUMNS: label, class, subclass, surface,
+    # transparency, angles, known_height_mm, notes, then the blank-ok block.
+    ws.append(["EXAMPLE - delete this row", "wood", "oak", "matte", "opaque",
+               "3", "12.5", "flat matte block, calipered", "", "", "", ""])
+    ws.cell(row=2, column=1).font = Font(italic=True, color="999999")
 
     wb.save(path)
     return path
@@ -482,7 +514,12 @@ def run_manifest(
                 label=label,
                 material_class=row["material_class"],
                 material_subclass=row["material_subclass"],
-                context={"source": "manifest", "manifest_path": os.path.basename(path)},
+                context={"source": "manifest",
+                         "manifest_path": os.path.basename(path),
+                         # Surface-property ground truth rides the sample so
+                         # export can pair it with the laser scatter features.
+                         "surface": row["surface"],
+                         "transparency": row["transparency"]},
                 db=db,
             )
             print(f"    created sample {sample_id}")
