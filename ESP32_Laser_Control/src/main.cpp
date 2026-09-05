@@ -113,6 +113,15 @@ static constexpr uint32_t LASER_FREQ_MAX     = 40000;    // Hz (safe for 8-bit L
 static constexpr uint32_t LASER_FREQ_DEFAULT = 1000;     // Hz
 static constexpr uint32_t LASER_WATCHDOG_MS  = 2000;     // host-silence timeout
 
+// The laser TTL line on THIS rig (through the 5V level shifter to the 455 nm
+// 5.5 W module). Parked LOW at boot so it is never left floating: an
+// unconfigured laser used to mean GPIO21 stayed a floating INPUT, and what the
+// module's TTL saw then depended entirely on the level shifter's behavior with
+// a floating input. Parking cannot cover the ~100 ms reset window itself (all
+// GPIOs float during ROM boot; only a hardware pulldown covers that), but it
+// closes the minutes-long window between boot and LASER CONFIG.
+static constexpr uint8_t  LASER_PARK_PIN     = 21;
+
 // ── Data model ─────────────────────────────────────────────────────────────
 
 struct Channel {
@@ -646,6 +655,14 @@ void setup() {
     // unknown state when the host sees the device come online.
     loadChannels();
     applySafeStates();
+
+    // Park the laser TTL line LOW before anything else can float it high.
+    // Skipped only if a relay channel already owns the pin (pinInUse guards
+    // CONFIG against taking it later either way).
+    if (!pinInUse(LASER_PARK_PIN, -1)) {
+        pinMode(LASER_PARK_PIN, OUTPUT);
+        digitalWrite(LASER_PARK_PIN, LOW);
+    }
 
     // The laser always comes up UNconfigured, disarmed, 0%. Its config is never
     // persisted, so a reboot can never restore laser output on its own.

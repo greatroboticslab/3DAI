@@ -81,3 +81,6 @@ data
 # captured scan data (images/npz on disk, not in git)
 scanner_data/
 claude_images/
+
+# quarantined malware folder - never track or publish
+Microsoft-Office-2022/
