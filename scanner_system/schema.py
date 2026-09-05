@@ -146,15 +146,27 @@ def build_scan(
     mode: str = "full",
     operator: Optional[str] = None,
     notes: str = "",
+    angle: Optional[dict[str, int]] = None,
     scan_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build a ``scans`` document for one capture session of a sample.
 
     ``mode`` must be one of CAPTURE_MODES. The per-instrument ``results`` start
     empty and are filled in as capture proceeds (via ``instrument_result``).
+
+    ``angle`` records which viewing pose this scan is, for multi-angle
+    collection ("shining lasers on it from different angles" per Dr. Zhang):
+    ``{"index": k, "count": n}`` meaning pose k of n for this sample. None
+    means single-pose. Stored structured rather than in ``notes`` so dataset
+    export can carry it as a queryable field per training row.
     """
     if mode not in CAPTURE_MODES:
         raise ValueError(f"unknown capture mode {mode!r}; use one of {CAPTURE_MODES}")
+    if angle is not None:
+        idx, cnt = int(angle.get("index", 0)), int(angle.get("count", 0))
+        if not (1 <= idx <= cnt):
+            raise ValueError(f"angle index/count out of order: {angle!r}")
+        angle = {"index": idx, "count": cnt}
     now = _now()
     return {
         "_id": scan_id or new_id(),
@@ -163,6 +175,7 @@ def build_scan(
         "status": "running",
         "operator": operator,
         "notes": notes,
+        "angle": angle,
         # requested vs. actual, per instrument, so the GUI can show honest state.
         "results": {},          # e.g. {"kinect": {"status":"ok"}, "laser": {...}}
         "started_at": now,

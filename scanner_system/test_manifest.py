@@ -259,3 +259,46 @@ def test_summarize_survives_a_sparse_package():
     assert out["artifact_count"] == 0
     assert out["failure_detail"] == ""
     assert out["kinect_status"] == ""
+
+
+# ── Multi-angle rows ────────────────────────────────────────────────────────
+
+def test_validate_row_angles():
+    assert manifest.validate_row({"label": "x"}, 2)["angles"] == 1
+    assert manifest.validate_row({"label": "x", "angles": "3"}, 2)["angles"] == 3
+    # openpyxl numeric cells arrive as floats
+    assert manifest.validate_row({"label": "x", "angles": "3.0"}, 2)["angles"] == 3
+    for bad in ("0", "13", "many"):
+        try:
+            manifest.validate_row({"label": "x", "angles": bad}, 4)
+        except manifest.ManifestError as exc:
+            assert "row 4" in str(exc)
+        else:
+            raise AssertionError(f"angles={bad!r} should have been rejected")
+
+
+def _pose(status, detail="", count=1):
+    return {"scan_id": "id-" + status, "status": status, "kinect_status": "ok",
+            "projector_status": "ok", "laser_status": "ok",
+            "failure_detail": detail, "artifact_count": count,
+            "started_at": "t0", "completed_at": "t1"}
+
+
+def test_aggregate_single_pose_passthrough():
+    s = _pose("complete")
+    assert manifest._aggregate([s]) == s
+
+
+def test_aggregate_multi_pose():
+    agg = manifest._aggregate([_pose("complete", count=10), _pose("complete", count=10)])
+    assert agg["status"] == "complete"
+    assert agg["artifact_count"] == 20
+    assert agg["scan_id"] == "id-complete; id-complete"
+
+    # one bad pose degrades the whole row so a re-run retries the object
+    agg = manifest._aggregate([_pose("complete"), _pose("failed", detail="kinect died")])
+    assert agg["status"] == "partial"
+    assert "pose 2: kinect died" in agg["failure_detail"]
+
+    agg = manifest._aggregate([_pose("failed", detail="a"), _pose("failed", detail="b")])
+    assert agg["status"] == "failed"

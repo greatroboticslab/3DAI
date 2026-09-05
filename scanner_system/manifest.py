@@ -63,6 +63,7 @@ ENTRY_COLUMNS = [
     "material_subclass",  # ML target, e.g. "oak"
     "mode",              # one of schema.CAPTURE_MODES, default "full"
     "laser_channels",    # e.g. "1,2,3". Blank = default channels.
+    "angles",            # poses per object, e.g. 3 = scan at 3 orientations. Blank = 1.
     "operator",          # who ran it. Supported end to end, never captured by the GUI.
     "notes",             # freeform, lands on the scan document
 ]
@@ -149,6 +150,17 @@ def validate_row(row: dict[str, Any], number: int) -> dict[str, Any]:
     except ManifestError as exc:
         raise ManifestError(f"row {number}: {exc}") from None
 
+    angles_txt = _clean(row.get("angles"))
+    if angles_txt:
+        try:
+            angles = int(float(angles_txt))
+        except ValueError:
+            raise ManifestError(f"row {number}: angles {angles_txt!r} is not a number")
+        if not (1 <= angles <= 12):
+            raise ManifestError(f"row {number}: angles must be 1-12, got {angles}")
+    else:
+        angles = 1
+
     return {
         "row_number": number,
         "sample_id": _clean(row.get("sample_id")) or None,
@@ -157,6 +169,7 @@ def validate_row(row: dict[str, Any], number: int) -> dict[str, Any]:
         "material_subclass": _clean(row.get("material_subclass")) or None,
         "mode": mode,
         "laser_channels": channels,
+        "angles": angles,
         "operator": _clean(row.get("operator")) or None,
         "notes": _clean(row.get("notes")),
         "status": _clean(row.get("status")),
@@ -279,7 +292,7 @@ def write_template(path: str, rows: int = 25) -> str:
 
     # One example row, clearly marked so nobody scans it by accident.
     ws.append(["", "EXAMPLE - delete this row", "wood", "oak", "full", "1,2,3",
-               "your name", "example notes"])
+               "3", "your name", "example notes"])
     ws.cell(row=2, column=2).font = Font(italic=True, color="999999")
 
     wb.save(path)
@@ -359,6 +372,39 @@ def _summarize(pkg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _aggregate(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Fold per-pose scan summaries into one manifest row's RESULT columns.
+
+    A multi-angle row is complete only when every pose is; one bad pose makes
+    the whole row partial so re-running retries the object rather than leaving
+    a silently thin sample in the dataset.
+    """
+    if len(summaries) == 1:
+        return dict(summaries[0])
+    statuses = [s["status"] for s in summaries]
+    if all(s == "complete" for s in statuses):
+        status = "complete"
+    elif any(s in ("complete", "partial") for s in statuses):
+        status = "partial"
+    else:
+        status = "failed"
+    details = "; ".join(
+        f"pose {i}: {s['failure_detail']}"
+        for i, s in enumerate(summaries, start=1) if s["failure_detail"]
+    )
+    return {
+        "scan_id": "; ".join(s["scan_id"] for s in summaries),
+        "status": status,
+        "kinect_status": summaries[-1]["kinect_status"],
+        "projector_status": summaries[-1]["projector_status"],
+        "laser_status": summaries[-1]["laser_status"],
+        "failure_detail": details,
+        "artifact_count": sum(s["artifact_count"] for s in summaries),
+        "started_at": summaries[0]["started_at"],
+        "completed_at": summaries[-1]["completed_at"],
+    }
+
+
 def run_manifest(
     path: str,
     limit: Optional[int] = None,
@@ -424,15 +470,30 @@ def run_manifest(
             )
             print(f"    created sample {sample_id}")
 
-        pkg = capture.run_capture(
-            sample_id=sample_id,
-            mode=row["mode"],
-            laser_channels=row["laser_channels"],
-            operator=row["operator"],
-            db=db,
-        )
+        # One scan per pose. Dr. Zhang's collection design is "shining lasers
+        # on it from different angles": the object is physically rotated
+        # between poses, each pose is its own scan document tagged
+        # angle={index, count}, and all of them share the sample_id.
+        n_angles = row["angles"]
+        summaries = []
+        for k in range(1, n_angles + 1):
+            if prompt and k > 1:
+                input(f">>> Rotate {label!r} to pose {k}/{n_angles}, "
+                      "then press Enter: ")
+            if n_angles > 1:
+                print(f"    pose {k}/{n_angles}...")
+            pkg = capture.run_capture(
+                sample_id=sample_id,
+                mode=row["mode"],
+                laser_channels=row["laser_channels"],
+                operator=row["operator"],
+                angle={"index": k, "count": n_angles} if n_angles > 1 else None,
+                notes=row["notes"],
+                db=db,
+            )
+            summaries.append(_summarize(pkg))
 
-        summary = _summarize(pkg)
+        summary = _aggregate(summaries)
         summary["sample_id"] = sample_id
         write_results(path, row["row_number"], summary)
 

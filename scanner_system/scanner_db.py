@@ -142,10 +142,11 @@ def list_samples(db=None, limit: int = 200) -> list[dict[str, Any]]:
 
 # ── Scans ───────────────────────────────────────────────────────────────────
 
-def start_scan(sample_id, mode="full", operator=None, notes="", db=None) -> str:
+def start_scan(sample_id, mode="full", operator=None, notes="", angle=None, db=None) -> str:
     """Start a scan for a sample in the given capture mode; returns scan_id."""
     d = get_db(db)
-    doc = schema.build_scan(sample_id, mode=mode, operator=operator, notes=notes)
+    doc = schema.build_scan(sample_id, mode=mode, operator=operator, notes=notes,
+                            angle=angle)
     d["scans"].insert_one(doc)
     return doc["_id"]
 
@@ -260,7 +261,13 @@ def export_dataset(material_class=None, modality=None, db=None) -> list[dict[str
     rows: list[dict[str, Any]] = []
     for sample in samples_by_material(material_class=material_class, db=d):
         mat = sample.get("material", {})
+        # One scans query per sample so every training row can carry its scan's
+        # viewing angle. Multi-angle collection makes (sample, angle) the real
+        # unit of capture; without this join the angle is invisible to ML.
+        angles_by_scan = {s["_id"]: s.get("angle") for s in
+                          scans_for_sample(sample["_id"], db=d)}
         for art in artifacts_for_sample(sample["_id"], modality=modality, db=d):
+            angle = angles_by_scan.get(art.get("scan_id"))
             rows.append({
                 "sample_id": sample["_id"],
                 "material_class": mat.get("class"),
@@ -269,6 +276,9 @@ def export_dataset(material_class=None, modality=None, db=None) -> list[dict[str
                 "role": art.get("role"),
                 "wavelength_nm": (art.get("laser_state") or {}).get("wavelength_nm"),
                 "file_path": art.get("file_path"),
+                "scan_id": art.get("scan_id"),
+                "angle_index": (angle or {}).get("index"),
+                "angle_count": (angle or {}).get("count"),
             })
     return rows
 

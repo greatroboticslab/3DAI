@@ -204,6 +204,8 @@ def run_capture(
     laser_channels: Optional[list[int]] = None,
     wavelengths: Optional[dict[int, int]] = None,
     operator: Optional[str] = None,
+    angle: Optional[dict[str, int]] = None,
+    notes: str = "",
     port: Optional[str] = None,
     db=None,
 ) -> dict[str, Any]:
@@ -223,7 +225,8 @@ def run_capture(
     laser_channels = laser_channels or []
     wavelengths = wavelengths or {}
 
-    scan_id = scanner_db.start_scan(sample_id, mode=mode, operator=operator, db=d)
+    scan_id = scanner_db.start_scan(sample_id, mode=mode, operator=operator,
+                                    angle=angle, notes=notes, db=d)
     scan_dir = os.path.join(STORAGE_ROOT, "scans", scan_id)
 
     wants_laser = mode in ("full", "laser_only") and laser_channels

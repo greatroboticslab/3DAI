@@ -242,3 +242,33 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ── Multi-angle scans ───────────────────────────────────────────────────────
+
+def test_scan_angle_stored_and_validated():
+    doc = schema.build_scan("s1", angle={"index": 2, "count": 3})
+    assert doc["angle"] == {"index": 2, "count": 3}
+    assert schema.build_scan("s1")["angle"] is None
+    for bad in ({"index": 0, "count": 3}, {"index": 4, "count": 3}):
+        try:
+            schema.build_scan("s1", angle=bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad} should have been rejected")
+
+
+def test_export_dataset_carries_angle():
+    db = FakeDB()
+    sid = scanner_db.create_sample("obj", material_class="wood", db=db)
+    scan1 = scanner_db.start_scan(sid, angle={"index": 1, "count": 2}, db=db)
+    scanner_db.register_artifact(scan1, sid, "laser", "laser_ch1_png", "a.png", db=db)
+    scan2 = scanner_db.start_scan(sid, angle={"index": 2, "count": 2}, db=db)
+    scanner_db.register_artifact(scan2, sid, "laser", "laser_ch1_png", "b.png", db=db)
+    rows = scanner_db.export_dataset(db=db)
+    by_path = {r["file_path"]: r for r in rows}
+    assert by_path["a.png"]["angle_index"] == 1
+    assert by_path["b.png"]["angle_index"] == 2
+    assert by_path["b.png"]["angle_count"] == 2
+    assert by_path["a.png"]["scan_id"] == scan1
