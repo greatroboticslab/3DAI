@@ -167,7 +167,15 @@ def _reconstruct_height(scan_id, sample_id, fringe_dir, repo_root, d):
     import subprocess
 
     calib_dir = os.path.join(repo_root, "data", "scan_test", "calib_new")
-    ref_dir = os.getenv("SCANNER_FRINGE_REFERENCE", os.path.join(calib_dir, "ref20"))
+    # ref20_20260905: empty-stage reference captured 2026-09-05 under the
+    # CURRENT geometry (Kinect repositioned, projector re-tilted); footprint
+    # x 326-1124, y 111-659, verified identical to the live zone. The old
+    # ref20 covered the pre-move zone, so height maps could only reconstruct
+    # the overlap. Note the per-pixel gain map pairs with the OLD reference
+    # and now correctly skips itself (footprint mismatch), so reconstruction
+    # falls back to the global curve until the Lego recalibration.
+    ref_dir = os.getenv("SCANNER_FRINGE_REFERENCE",
+                        os.path.join(calib_dir, "ref20_20260905"))
     calib_txt = os.getenv("SCANNER_HEIGHT_CALIB",
                           os.path.join(calib_dir, "calibration_temporal_20260731.txt"))
     recon_script = os.path.join(repo_root, "data", "scan_test", "reconstruct_height.py")
