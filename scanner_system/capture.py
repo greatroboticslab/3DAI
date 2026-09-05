@@ -49,10 +49,14 @@ def _rel(path: str) -> str:
 # "lit" box swallows half the frame, and any ambient change between the two
 # frames fakes lit area too (both failure modes observed 2026-09-05).
 #
-# Measured 2026-09-05 after the Kinect was repositioned: fringe footprint
-# x 334-1123, y 127-663 in the 1920x1080 frame, plus 3% pad. The previous
-# default (0.24, 0.34, 0.52, 0.64) was tuned for the old camera pose and cut
-# off everything left of x=460, a quarter of the frame width.
+# Measured 2026-09-05 after the Kinect was repositioned (and re-checked after
+# a projector tilt, which moved it by only ~16 px): fringe footprint
+# x 326-1124, y 111-659 in the 1920x1080 frame. The pad on top of that is
+# deliberately GENEROUS, extra at the bottom: the projector throws off-axis,
+# so its zone is a keystone quad whose dim far corner can fall below what the
+# amplitude detector bounds, and a slightly loose presentation crop costs
+# nothing while a tight one visibly amputates the scene. The pre-move default
+# (0.24, 0.34, 0.52, 0.64) cut off everything left of x=460.
 def _scan_roi() -> tuple[float, float, float, float]:
     raw = os.getenv("SCANNER_SCAN_ROI", "").strip()
     if raw:
@@ -61,7 +65,7 @@ def _scan_roi() -> tuple[float, float, float, float]:
             return x0, y0, x1, y1
         except Exception:
             pass
-    return 0.14, 0.09, 0.61, 0.64
+    return 0.12, 0.05, 0.65, 0.72
 
 
 def _crop_to_roi(path: str) -> Optional[int]:
