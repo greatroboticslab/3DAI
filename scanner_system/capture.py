@@ -250,6 +250,28 @@ def run_capture(
                 raise RuntimeError(f"no response from ESP32 on {p} "
                                    "(port busy or board resetting)")
 
+            # Ambient dark frame: projector black, ALL lasers driven off first.
+            # Downstream material analysis subtracts this from each laser frame
+            # to isolate what that one laser adds to the scene. Without it the
+            # faint channels are unusable: CH3 is a genuine smudge of a laser
+            # and its contribution is invisible against the auto-exposed
+            # ambient (~130 mean in a dark room). Known limit: each grab is a
+            # separate process, so auto-exposure re-converges per frame and the
+            # subtraction is approximate, worst under CH4's green flood.
+            rc.safe_all()
+            time.sleep(0.3)
+            dark = os.path.join(scan_dir, "laser", "dark.png")
+            dgrab = _kinect_grab(dark)
+            if dgrab["ok"]:
+                scanner_db.register_artifact(
+                    scan_id, sample_id, "laser", "laser_dark_png",
+                    _rel(dark), media_type="image/png",
+                    size_bytes=dgrab.get("size_bytes") or os.path.getsize(dark),
+                    db=d)
+            else:
+                scanner_db.record_instrument(
+                    scan_id, "laser_dark", "failed", detail=dgrab["detail"], db=d)
+
             any_ok = False
             for ch in laser_channels:
                 # fire this laser, capture, then turn it off
