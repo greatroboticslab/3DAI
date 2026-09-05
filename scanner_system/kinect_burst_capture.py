@@ -44,6 +44,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 
 import numpy as np
@@ -73,53 +74,85 @@ def _parse_roi(text):
 
 
 class _Laser:
-    """Minimal in-process relay driver, so laser edges share the frame clock.
+    """In-process relay driver, so laser edges share the frame clock.
 
-    Deliberately does not import lib_3dai: that module pulls in projector and
-    Kinect code, and this script already owns the sensor. Speaks the same
-    firmware protocol directly over pyserial.
+    Wraps the project's RelayController rather than re-speaking the serial
+    protocol. An earlier version of this class reimplemented PING/SET with a
+    single readline() and failed against a perfectly healthy board, because the
+    firmware's reply is not always the first line back. RelayController already
+    reads the first line on the full timeout and then drains follow-ups, so
+    reuse it and keep one source of truth for the protocol.
+
+    Imported by path from lib_3dai rather than as a package, to avoid pulling in
+    the projector/Kinect modules in lib_3dai/__init__ while this process already
+    owns the sensor.
     """
 
     def __init__(self, port, channel):
-        import serial  # local import: only needed when a laser is requested
+        import sys as _sys
+        _repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _sys.path.insert(0, os.path.join(_repo, "lib_3dai"))
+        from relay_controller import RelayController
+
         self.channel = channel
         self.events = []
-        self._ser = serial.Serial(port=port, baudrate=115200, timeout=2.0)
-        time.sleep(1.5)                # board resets on port open; let it boot
-        self._ser.reset_input_buffer()
-        if "PONG" not in self._cmd("PING"):
-            raise RuntimeError(f"no PONG from relay firmware on {port}")
-
-    def _cmd(self, text):
-        self._ser.reset_input_buffer()
-        self._ser.write((text + "\n").encode())
-        return self._ser.readline().decode(errors="replace").strip()
+        self._threads = []
+        # Opening the port DTR-resets the ESP32, and a run that follows hard
+        # on the heels of a previous run's disconnect can catch the board
+        # mid-boot: observed as an intermittent no-PONG on an otherwise
+        # healthy board. Retry a couple of times before declaring it dead.
+        self._rc = RelayController(port)
+        for attempt in range(3):
+            if self._rc.connect():
+                break
+            self._rc.disconnect()
+            time.sleep(1.0)
+        else:
+            raise RuntimeError(f"no PONG from relay firmware on {port} after 3 tries")
 
     def set(self, on, t_rel):
-        """Drive the channel and record when the command was acknowledged."""
-        t_send = time.perf_counter()
-        reply = self._cmd(f"SET {self.channel} {'ON' if on else 'OFF'}")
-        t_ack = time.perf_counter()
-        self.events.append({
+        """Drive the channel WITHOUT blocking the caller.
+
+        The serial round-trip takes ~150 ms. Done inline it stalls the frame
+        loop and drops ~5 frames at exactly the laser edge, which are the
+        frames the transient lives in (measured: 170 ms timestamp holes at
+        both edges of the first live burst). So the command runs on a thread;
+        the event is appended immediately and the ack fields are filled in
+        when the reply lands. join_pending() waits for the threads.
+        """
+        event = {
             "action": "ON" if on else "OFF",
             "channel": self.channel,
             "t_scheduled": t_rel,
-            "t_sent": t_send,
-            "t_acked": t_ack,
-            "reply": reply,
-        })
-        return reply
+            "t_sent": time.perf_counter(),
+            "t_acked": None,
+            "ok": None,
+        }
+        self.events.append(event)
+
+        def _worker():
+            ok = self._rc.set_channel(self.channel, on)
+            event["t_acked"] = time.perf_counter()
+            event["ok"] = bool(ok)
+
+        th = threading.Thread(target=_worker, daemon=True)
+        self._threads.append(th)
+        th.start()
+
+    def join_pending(self, timeout=5.0):
+        """Wait for in-flight laser commands (call after the burst loop)."""
+        for th in self._threads:
+            th.join(timeout)
 
     def shutdown(self):
         """Always drive OFF and SAFE, whatever happened."""
         try:
-            self._cmd(f"SET {self.channel} OFF")
-            self._cmd("SAFE")
+            self._rc.set_channel(self.channel, False)
+            self._rc.safe_all()
+        except Exception:
+            pass
         finally:
-            try:
-                self._ser.close()
-            except Exception:
-                pass
+            self._rc.disconnect()
 
 
 def main(argv=None):
@@ -228,6 +261,7 @@ def main(argv=None):
         elapsed = time.perf_counter() - t0
     finally:
         if laser is not None:
+            laser.join_pending()   # let in-flight commands land before OFF/SAFE
             laser.shutdown()
         kinect.close()
 

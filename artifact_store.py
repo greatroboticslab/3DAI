@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-ALLOWED_CATEGORIES = {"kinect", "fringe", "fusion", "calibration"}
+ALLOWED_CATEGORIES = {"kinect", "fringe", "fusion", "calibration", "laser"}
 
 ALLOWED_EXTENSIONS = {
     ".jpg",
@@ -16,6 +16,7 @@ ALLOWED_EXTENSIONS = {
     ".tif",
     ".tiff",
     ".npz",
+    ".npy",
     ".json",
     ".txt",
 }

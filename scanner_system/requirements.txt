@@ -13,6 +13,11 @@ streamlit<1.50
 pymongo>=4,<5
 pandas>=2,<3
 pillow>=10,<12
+# NOTE (2026-09-05 audit): pillow 11.x carries open advisories (PYSEC-2026-3453..3496)
+# whose fix is pillow 12.3, but streamlit<1.50 declares pillow<12, and streamlit is
+# held <1.50 for starlette compatibility with the 3DAI API's fastapi. The chain is
+# fastapi/starlette -> streamlit<1.50 -> pillow<12. Lifting it means qualifying
+# streamlit 1.53+ against the API first. Accepted for a non-internet-facing lab PC.
 plotly>=5.18,<7          # interactive 3D height-map surface in the GUI
 
 # imaging / reconstruction (host-side capture + fringe tools)

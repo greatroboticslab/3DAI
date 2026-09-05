@@ -5,6 +5,7 @@ This is scanner-side bookkeeping only. It never starts capture, projector,
 Kinect, relay, serial, ESP32, or laser code.
 """
 
+import re
 import argparse
 import json
 import os
@@ -42,13 +43,29 @@ def role_for_file(path: Path, info: dict[str, Any]) -> tuple[str, str] | None:
             return "fringe", "fringe_stack_npz"
         return None
 
+    if suffix == ".npy":
+        if name == "height_mm.npy":
+            return "fusion", "height_map_npy"
+        return None
+
     if suffix in {".jpg", ".jpeg", ".png", ".tif", ".tiff"}:
-        if name.startswith("color_"):
-            return "kinect", "color_image"
+        # Laser modality (scanner_system capture layout): dark references,
+        # per-channel color frames, and the infrared-camera view of each.
+        # Role names match scanner_system/capture.py so downstream tools that
+        # select by role (Roboflow staging, features) see these too.
+        m = re.fullmatch(r"las(\d)(_ir)?\.png", name)
+        if m:
+            return "laser", f"laser_ch{m.group(1)}{'_ir' if m.group(2) else ''}_png"
+        if name == "dark.png":
+            return "laser", "laser_dark_png"
+        if name == "dark_ir.png":
+            return "laser", "laser_dark_ir_png"
+        if name in {"color.png", "color_png"} or name.startswith("color_"):
+            return "kinect", "color_png"
         if name.startswith("depth_") or "depth" in name:
             return "kinect", "depth_preview"
         if name == "white.png":
-            return "fringe", "white_frame"
+            return "fringe", "fringe_white_png"
         if name.startswith("fringe_"):
             return "fringe", "fringe_frame"
         if name == "height_mm.png":
@@ -67,6 +84,11 @@ def role_for_file(path: Path, info: dict[str, Any]) -> tuple[str, str] | None:
 
     if suffix == ".txt" and name.startswith("calibration"):
         return "calibration", "calibration_coefficients_txt"
+
+    if name == "exposure.json":
+        # per-frame laser exposure metadata; also the marker that a scan is a
+        # single-session capture and therefore subtractable
+        return "laser", "exposure_json"
 
     if suffix == ".json":
         return "calibration", "metadata_json"

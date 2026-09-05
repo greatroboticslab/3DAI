@@ -131,9 +131,9 @@ def _render_capture(sid):
         )
         chans = st.multiselect(
             "Laser channels to fire", list(schema.LASER_CHANNELS),
-            default=[1, 2, 3], key=f"chans_{sid}",  # CH4 diode lead broken; solder fix pending
+            default=list(schema.LASER_CHANNELS), key=f"chans_{sid}",
             help="Which of the 4 lasers to capture the sample under. "
-                 "Each is a different wavelength.",
+                 "CH1/CH2 red, CH3 near-infrared, CH4 green.",
         )
         st.caption(
             "This drives real hardware: it fires the selected lasers and captures "
@@ -184,6 +184,9 @@ def _render_scan(scan):
             with thumbs[i % 4]:
                 _render_artifact(art)
 
+    # interactive 3D surface from the structured-light height map
+    _render_height_3d_for_scan(pkg, scan["_id"])
+
     # publish this scan into 4DAI (via 4DAI's own public API; 4DAI unchanged)
     if has_images and status in ("complete", "partial"):
         _render_publish(scan)
@@ -213,16 +216,95 @@ def _render_publish(scan):
 def _render_artifact(art):
     cap = art.get("role", "")
     ls = art.get("laser_state")
+    role = str(art.get("role", ""))
     if ls:
         wl = ls.get("wavelength_nm")
         cap += f" · {wl}nm" if wl else ""
-        cap += " (IR)" if ls.get("ir") else ""
+        # laser_state.ir describes the LASER; the camera is told by the role.
+        cap += " NIR laser" if ls.get("ir") else ""
+    if role.endswith("_ir_png"):
+        cap += " · IR camera 512x424"
     path = _artifact_abs_path(art.get("file_path", ""))
     media = art.get("media_type", "")
     if media.startswith("image/") and os.path.isfile(path):
-        st.image(path, caption=cap, use_container_width=True)
+        st.image(_displayable(path), caption=cap, use_container_width=True)
     else:
         st.caption(f"{cap}\n\n`{art.get('file_path','')}`")
+
+
+def _displayable(path: str):
+    """Return something st.image can render for any of our PNGs.
+
+    The infrared frames are 16-bit grayscale (mode I;16). Streamlit hands
+    non-RGB(A)/P images to Pillow for JPEG re-encoding, and Pillow refuses
+    mode I;16, so st.image(path) raised OSError and took the whole Samples
+    page down for every scan captured since IR frames were added. Raw Kinect
+    IR values also sit near the bottom of the 0-65535 range, so a plain cast
+    renders black: stretch between the 1st and 99.5th percentiles instead.
+    """
+    try:
+        from PIL import Image
+        import numpy as np
+        img = Image.open(path)
+        if not img.mode.startswith("I"):
+            return path
+        a = np.asarray(img, dtype=np.float32)
+        lo, hi = np.percentile(a, 1.0), np.percentile(a, 99.5)
+        if hi <= lo:
+            hi = lo + 1.0
+        return np.clip((a - lo) / (hi - lo) * 255.0, 0, 255).astype("uint8")
+    except Exception:
+        return path
+
+
+def _render_height_3d(npy_path):
+    """Interactive 3D surface of a structured-light height map (mm)."""
+    import numpy as np
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        st.info("3D view needs plotly:  `scanner_system/.venv/Scripts/pip install plotly`")
+        return
+    h = np.load(npy_path).astype(float)
+    finite = np.isfinite(h)
+    if int(finite.sum()) < 100:
+        st.caption("Height map too sparse to render in 3D.")
+        return
+    zmin = float(np.nanpercentile(h, 1))
+    zmax = float(np.nanpercentile(h, 99))
+    step = max(1, max(h.shape) // 220)                 # keep the surface light + smooth
+    hs = np.clip(h[::step, ::step], zmin, zmax)        # clip edge spikes for a clean surface
+    rows, cols = hs.shape
+    fig = go.Figure(go.Surface(
+        z=hs, colorscale="Turbo", cmin=zmin, cmax=zmax,
+        colorbar=dict(title="mm"), connectgaps=False))
+    fig.update_layout(
+        height=520, margin=dict(l=0, r=0, t=10, b=0),
+        scene=dict(xaxis_title="x (px)", yaxis_title="y (px)", zaxis_title="height (mm)",
+                   aspectmode="manual",
+                   aspectratio=dict(x=1.0, y=rows / max(cols, 1), z=0.35)))
+    st.plotly_chart(fig, use_container_width=True)
+    obj = h[finite & (h > 3.0)]
+    if obj.size:
+        st.caption(f"Object height: median **{np.median(obj):.1f} mm** · "
+                   f"peak {zmax:.1f} mm · {int(finite.sum()):,} reliable points")
+
+
+def _render_height_3d_for_scan(pkg, scan_id):
+    """Show the 3D height surface for a scan, if it produced a height map."""
+    fusion = pkg["artifacts"].get("fusion", [])
+    npy = next((a for a in fusion if a.get("role") == "height_map_npy"), None)
+    if not npy:
+        return
+    npy_path = _artifact_abs_path(npy.get("file_path", ""))
+    if not os.path.isfile(npy_path):
+        return
+    with st.expander("🧊 3D reconstruction", expanded=False):
+        # Lazy: only build the Plotly figure when asked (keeps multi-scan pages fast).
+        if st.checkbox("Render interactive 3D surface", key=f"3d_{scan_id}"):
+            _render_height_3d(npy_path)
+        else:
+            st.caption("Per-pixel structured-light height map — tick to load the interactive 3D view.")
 
 
 # ── Page: Capture (the main workflow) ───────────────────────────────────────
@@ -267,9 +349,10 @@ def page_capture():
     mode = st.selectbox("Mode", list(schema.CAPTURE_MODES),
                         format_func=lambda m: _MODE_LABELS.get(m, m))
     chans = st.multiselect(
-        "Laser wavelengths (channels)", list(schema.LASER_CHANNELS), default=[1, 2, 3],
-        help="Each channel is a different wavelength. CH4's diode lead is broken "
-             "(solder fix pending).")
+        "Laser wavelengths (channels)", list(schema.LASER_CHANNELS),
+        default=list(schema.LASER_CHANNELS),
+        help="CH1/CH2 red (~635 nm), CH3 near-infrared (~940 nm, captured on the "
+             "Kinect IR sensor), CH4 green (~530 nm, floods the scene).")
     st.caption("⚠️ The laser stage fires real lasers (goggles on, safe beam). The "
                "projector goes black during it so the lasers are the only light.")
 
@@ -401,20 +484,38 @@ def page_hardware():
             st.divider()
             st.subheader("Blink test — find out what's wired")
             st.caption(
-                "Fire one channel briefly to see if anything physically responds. "
-                "It turns the channel back OFF automatically. **Only do this if it's "
-                "safe for that channel to activate** (e.g. a low-power laser pointed "
-                "somewhere safe, eye protection on if it's a laser)."
+                "Fire a channel to see if anything physically responds. Channels "
+                "are turned back OFF automatically. **Only do this if it's safe for "
+                "those channels to activate** (lasers pointed somewhere safe, eye "
+                "protection on)."
             )
             chans = [c["ch"] for c in es.channels]
             if chans:
-                c1, c2, c3 = st.columns([1, 1, 2])
+                c1, c2 = st.columns([1, 2])
                 ch = c1.selectbox("Channel", chans)
-                secs = c2.slider("Seconds", 0.2, 3.0, 1.0, 0.1)
-                if c3.button(f"⚡ Fire CH{ch} briefly", type="primary"):
-                    with st.spinner(f"Firing CH{ch}…"):
-                        r = hardware.blink_channel(ch, port=guess, seconds=secs)
+                secs = c2.slider("Seconds", 0.2, 15.0, 1.0, 0.1)
+                aim = st.checkbox(
+                    "Project aiming target while firing",
+                    help="Shows the bullseye/grid on the projector at the same time "
+                         "so you can walk the laser dot onto the center while it's lit.",
+                )
+
+                def _fire(label, fn):
+                    proc = hardware.start_target_projection(secs) if aim else None
+                    try:
+                        with st.spinner(f"{label} for {secs:.1f}s…"):
+                            r = fn()
+                    finally:
+                        hardware.stop_projection(proc)
                     (st.success if r["ok"] else st.error)(r["message"])
+
+                b1, b2 = st.columns(2)
+                if b1.button(f"⚡ Fire CH{ch}", type="primary"):
+                    _fire(f"Firing CH{ch}",
+                          lambda: hardware.blink_channel(ch, port=guess, seconds=secs))
+                if b2.button(f"⚡⚡ Fire ALL {len(chans)} channels"):
+                    _fire(f"Firing all channels {chans}",
+                          lambda: hardware.blink_channels(chans, port=guess, seconds=secs))
 
 
 # ── Dispatch ────────────────────────────────────────────────────────────────

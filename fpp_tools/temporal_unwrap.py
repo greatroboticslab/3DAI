@@ -105,6 +105,24 @@ def estimate_temporal_absolute_phase(
     return absolute, np.asarray(contrast)
 
 
+def wrapped_reference_phase(
+    stacks: Iterable[np.ndarray],
+    *,
+    denoise_kernel: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Wrapped phase + contrast from the HIGHEST-frequency stack only.
+
+    Used by the robust ``method="wrapped"`` delta-phase path. Unlike the
+    multi-frequency absolute unwrap, this never chains through the noisy single
+    low-frequency fringe, so it cannot explode to +-N*2pi full-scale errors.
+    """
+    stack_list = [np.array(s, dtype=np.float32, copy=True) for s in stacks]
+    if not stack_list:
+        raise ValueError("at least one phase stack is required")
+    phi, contrast, _ = estimate_phi_N_uniform_frames(stack_list[-1])
+    return denoise_wrapped_phase(phi, denoise_kernel), np.asarray(contrast)
+
+
 def footprint_from_mask(mask: np.ndarray) -> Footprint:
     mask_bool = np.asarray(mask, dtype=bool)
     if mask_bool.ndim != 2:
@@ -150,15 +168,24 @@ def temporal_delta_phase(
     denoise_kernel: int = 1,
     median_kernel: int = 5,
     level: bool = True,
+    method: str = "wrapped",
 ) -> DeltaPhaseResult:
-    """Reference-subtracted temporal-unwrapped phase inside the projector footprint."""
+    """Reference-subtracted phase inside the projector footprint.
+
+    ``method="wrapped"`` (default) takes the wrapped single-highest-frequency
+    difference ``wrap(phi_obj - phi_ref)`` -- robust, but unambiguous only while
+    the height shift stays below half a fringe period (~80mm at the current
+    geometry). ``method="absolute"`` uses the multi-frequency temporal unwrap,
+    which resolves larger heights but intermittently explodes to +-N*2pi
+    full-scale errors when the single low-frequency fringe is noisy.
+    """
     ref_list = [np.asarray(stack, dtype=np.float32) for stack in ref_stacks]
     obj_list = [np.asarray(stack, dtype=np.float32) for stack in obj_stacks]
     if len(ref_list) != len(obj_list):
         raise ValueError("ref_stacks and obj_stacks must have the same length")
     if not ref_list:
         raise ValueError("at least one phase stack is required")
-    if any(ref.shape != obj.shape for ref, obj in zip(ref_list, obj_list)):
+    if any(ref.shape != obj.shape for ref, obj in zip(ref_list, obj_list, strict=True)):
         raise ValueError("reference and object stacks must have matching shapes")
 
     if footprint is None:
@@ -174,18 +201,26 @@ def temporal_delta_phase(
     obj_crop = [stack[row_slice, col_slice] for stack in obj_list]
     mask_crop = fp.mask[row_slice, col_slice]
 
-    phi_ref, _ = estimate_temporal_absolute_phase(
-        ref_crop,
-        freqs,
-        denoise_kernel=denoise_kernel,
-    )
-    phi_obj, contrast = estimate_temporal_absolute_phase(
-        obj_crop,
-        freqs,
-        denoise_kernel=denoise_kernel,
-    )
+    if method == "wrapped":
+        phi_ref, _ = wrapped_reference_phase(ref_crop, denoise_kernel=denoise_kernel)
+        phi_obj, contrast = wrapped_reference_phase(obj_crop, denoise_kernel=denoise_kernel)
+        raw = np.angle(np.exp(1j * (phi_obj - phi_ref))).astype(np.float32)
+    elif method == "absolute":
+        phi_ref, _ = estimate_temporal_absolute_phase(
+            ref_crop,
+            freqs,
+            denoise_kernel=denoise_kernel,
+        )
+        phi_obj, contrast = estimate_temporal_absolute_phase(
+            obj_crop,
+            freqs,
+            denoise_kernel=denoise_kernel,
+        )
+        raw = (phi_obj - phi_ref).astype(np.float32)
+    else:
+        raise ValueError("method must be 'wrapped' or 'absolute'")
 
-    delta = median_filter2d((phi_obj - phi_ref).astype(np.float32), median_kernel)
+    delta = median_filter2d(raw, median_kernel)
     contrast_floor = float(contrast.max()) * contrast_floor_fraction
     reliable = mask_crop & (contrast > contrast_floor)
     if not reliable.any():
@@ -221,6 +256,29 @@ def fit_height_curve(dphi: Iterable[float], height_mm: Iterable[float]) -> np.nd
             raise ValueError("cannot fit a line from zero dphi")
         return np.array([0.0, height_arr[index] / dphi_arr[index], 0.0])
     raise ValueError("at least one nonzero height is required")
+
+
+def reconstruct_height_map(
+    ref_stacks: Iterable[np.ndarray],
+    obj_stacks: Iterable[np.ndarray],
+    freqs: Iterable[float],
+    coeffs: Iterable[float],
+    *,
+    fill_value: float = float("nan"),
+    **delta_kwargs,
+) -> tuple[np.ndarray, DeltaPhaseResult]:
+    """Object height (mm) map from a reference + object fringe capture.
+
+    Computes reference-subtracted delta phase (robust wrapped method by default)
+    and maps it through the polynomial ``coeffs`` (``height = a*dphi^2 + b*dphi
+    + c``, i.e. ``np.polyval(coeffs, dphi)``). Pixels that fail the contrast gate
+    are set to ``fill_value``. Returns ``(height_mm, delta_result)`` so callers
+    keep the reliability mask, contrast, and footprint.
+    """
+    result = temporal_delta_phase(ref_stacks, obj_stacks, freqs, **delta_kwargs)
+    height = np.polyval(np.asarray(list(coeffs), dtype=float), result.delta).astype(np.float32)
+    height = np.where(result.reliable, height, np.float32(fill_value))
+    return height, result
 
 
 def median_filter2d(image: np.ndarray, kernel_size: int = 5) -> np.ndarray:
