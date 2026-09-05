@@ -20,10 +20,17 @@ issues SAFE.
 USAGE (invoked by capture.py, not by hand):
     kinect_laser_sequence.py <out_dir> <ch,ch,...> [--port COM3]
 
-Writes into <out_dir>: dark.png, las<ch>.png for each channel, and
-exposure.json recording per-frame ExposureTime + Gain (metadata; the drift
-fix is the single session, not a post-hoc division). Prints one OK/ERR line
-per frame so capture.py can register artifacts and record failures honestly.
+Writes into <out_dir>: dark.png, las<ch>.png for each channel, plus the
+Kinect INFRARED camera's view of the same moments as dark_ir.png and
+las<ch>_ir.png (512x424, 16-bit). The IR frames exist because CH3 is a
+near-infrared laser: the color camera is filtered against it and records a
+smudge, while the IR sensor (near 860 nm) sees it as brightly as the visible
+lasers. exposure.json records per-frame color ExposureTime + Gain (metadata;
+the drift fix is the single session, not a post-hoc division). Prints one
+OK/ERR line per frame so capture.py can register artifacts honestly.
+
+Requires the 2026-09-05 pykinect2 patch that wires up the infrared source
+(PyKinectRuntime.py.bak-20260905-infrared is the pre-patch copy).
 """
 
 import argparse
@@ -52,6 +59,17 @@ def _grab(k):
         pass
     buf = k.get_last_color_frame().reshape((h, w, 4))[:, :, :3]
     return buf.copy(), exp, gain
+
+
+def _grab_ir(k, timeout=2.0):
+    """Latest infrared frame as uint16 (512x424), or None if none arrives."""
+    h, w = k.infrared_frame_desc.Height, k.infrared_frame_desc.Width
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if k.has_new_infrared_frame():
+            return k.get_last_infrared_frame().reshape((h, w)).astype(np.uint16)
+        time.sleep(0.003)
+    return None
 
 
 def _wait_frame(k, timeout=12.0):
@@ -93,7 +111,8 @@ def main(argv=None) -> int:
 
     # One camera open for the whole sequence: this is the fix.
     k = PyKinectRuntime.PyKinectRuntime(
-        PyKinectV2.FrameSourceTypes_Color | PyKinectV2.FrameSourceTypes_Depth)
+        PyKinectV2.FrameSourceTypes_Color | PyKinectV2.FrameSourceTypes_Depth
+        | PyKinectV2.FrameSourceTypes_Infrared)
     exposure_log = {}
     try:
         time.sleep(1.5)
@@ -110,6 +129,11 @@ def main(argv=None) -> int:
         cv2.imwrite(dark_path, dark)
         exposure_log["dark"] = {"exposure_100ns": e, "gain": g}
         print(f"OK dark {dark_path}")
+        ir = _grab_ir(k)
+        if ir is not None:
+            ir_path = os.path.join(args.out_dir, "dark_ir.png")
+            cv2.imwrite(ir_path, ir)
+            print(f"OK dark_ir {ir_path}")
 
         for ch in channels:
             if not rc.set_channel(ch, True):
@@ -117,11 +141,16 @@ def main(argv=None) -> int:
                 continue
             time.sleep(args.settle)
             lit, e, g = _grab(k)
+            ir = _grab_ir(k)             # same lit moment, infrared sensor
             rc.set_channel(ch, False)
             out = os.path.join(args.out_dir, f"las{ch}.png")
             cv2.imwrite(out, lit)
             exposure_log[f"ch{ch}"] = {"exposure_100ns": e, "gain": g}
             print(f"OK ch{ch} {out}")
+            if ir is not None:
+                ir_path = os.path.join(args.out_dir, f"las{ch}_ir.png")
+                cv2.imwrite(ir_path, ir)
+                print(f"OK ch{ch}_ir {ir_path}")
     finally:
         try:
             rc.safe_all()

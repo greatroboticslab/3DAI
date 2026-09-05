@@ -183,17 +183,18 @@ def _laser_sequence(scan_dir: str, channels: list[int], port: str) -> dict[str, 
         return {"ok": False, "captured": {}, "errors": {},
                 "detail": f"laser sequence failed to launch: {exc}"}
 
-    captured: dict[Any, str] = {}
+    # Keys are the script's own tokens: "dark", "dark_ir", "ch3", "ch3_ir".
+    captured: dict[str, str] = {}
     errors: dict[int, str] = {}
     for line in (proc.stdout or "").splitlines():
         parts = line.split(maxsplit=2)
         if len(parts) == 3 and parts[0] == "OK":
-            key = "dark" if parts[1] == "dark" else int(parts[1][2:]) if parts[1].startswith("ch") else parts[1]
-            captured[key] = parts[2]
+            captured[parts[1]] = parts[2]
         elif parts and parts[0] == "ERR":
-            # channel-specific or fatal
-            if len(parts) >= 2 and parts[1].startswith("ch"):
-                errors[int(parts[1][2:])] = line[4:]
+            # channel-specific ("ERR ch3 ...") or fatal
+            tok = parts[1] if len(parts) >= 2 else ""
+            if tok.startswith("ch") and tok[2:].isdigit():
+                errors[int(tok[2:])] = line[4:]
     # A fatal ERR (no board, no camera) leaves nothing captured.
     if not captured:
         tail = (proc.stdout or proc.stderr or "").strip().splitlines()[-1:] or ["laser sequence produced no frames"]
@@ -338,30 +339,47 @@ def run_capture(
             if not res["ok"]:
                 raise RuntimeError(res["detail"])
 
-            captured = res["captured"]      # {"dark": path, ch: path, ...}
+            captured = res["captured"]      # {"dark": p, "dark_ir": p, "ch3": p, "ch3_ir": p}
             if "dark" in captured:
                 dark = captured["dark"]
                 dsize = _crop_to_roi(dark) or os.path.getsize(dark)
                 scanner_db.register_artifact(
                     scan_id, sample_id, "laser", "laser_dark_png",
                     _rel(dark), media_type="image/png", size_bytes=dsize, db=d)
+            # Infrared frames are NOT cropped: the IR sensor is 512x424 with
+            # its own optics, and the scan-zone box is in color-frame
+            # fractions; applying it here would cut the wrong region.
+            if "dark_ir" in captured:
+                p_ir = captured["dark_ir"]
+                scanner_db.register_artifact(
+                    scan_id, sample_id, "laser", "laser_dark_ir_png",
+                    _rel(p_ir), media_type="image/png",
+                    size_bytes=os.path.getsize(p_ir), db=d)
 
             any_ok = False
             for ch in laser_channels:
-                if ch not in captured:
+                if f"ch{ch}" not in captured:
                     scanner_db.record_instrument(
                         scan_id, f"laser_ch{ch}", "failed",
                         detail=res["errors"].get(ch, "not captured"), db=d)
                     continue
                 any_ok = True
-                out = captured[ch]
+                out = captured[f"ch{ch}"]
                 wl = wavelengths.get(ch) or schema.LASER_WAVELENGTHS_NM.get(ch)
+                state = schema.build_laser_state(ch, wavelength_nm=wl)
                 size = _crop_to_roi(out) or os.path.getsize(out)
                 scanner_db.register_artifact(
                     scan_id, sample_id, "laser", f"laser_ch{ch}_png",
                     _rel(out), media_type="image/png", size_bytes=size,
-                    laser_state=schema.build_laser_state(ch, wavelength_nm=wl),
-                    db=d)
+                    laser_state=state, db=d)
+                # The IR camera's view of the same lit moment. For CH3 (NIR)
+                # this is the frame that actually contains the laser.
+                if f"ch{ch}_ir" in captured:
+                    p_ir = captured[f"ch{ch}_ir"]
+                    scanner_db.register_artifact(
+                        scan_id, sample_id, "laser", f"laser_ch{ch}_ir_png",
+                        _rel(p_ir), media_type="image/png",
+                        size_bytes=os.path.getsize(p_ir), laser_state=state, db=d)
             scanner_db.record_instrument(
                 scan_id, "laser", "ok" if any_ok else "failed",
                 detail="" if any_ok else "no laser frames captured", db=d)
