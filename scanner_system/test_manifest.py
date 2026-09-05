@@ -267,7 +267,7 @@ def test_summarize_survives_a_sparse_package():
 # ── Multi-angle rows ────────────────────────────────────────────────────────
 
 def test_validate_row_angles():
-    assert manifest.validate_row({"label": "x"}, 2)["angles"] == 1
+    assert manifest.validate_row({"label": "x"}, 2)["angles"] == manifest.DEFAULT_ANGLES == 2
     assert manifest.validate_row({"label": "x", "angles": "3"}, 2)["angles"] == 3
     # openpyxl numeric cells arrive as floats
     assert manifest.validate_row({"label": "x", "angles": "3.0"}, 2)["angles"] == 3

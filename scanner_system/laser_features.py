@@ -156,7 +156,16 @@ def _color_channel(lit_path: str, dark: np.ndarray) -> dict[str, Any]:
     sat = float((lit.max(axis=2)[core_mask] >= 250).mean()) if core_mask.any() else 0.0
 
     flood = lit_frac > FLOOD_FRACTION
+    # The stage is a flat white matte table, present in every scan. For a
+    # flood channel, the laser's brightness on the table far from the spot
+    # is a per-scan reference for laser output drift, independent of the
+    # object. For spot lasers this is ~0 by construction (they hit the
+    # object), so it is reported only for flood channels.
+    far = np.hypot(yy - cy, xx - cx) > 150
+    flood_bg = float(mag[far].mean()) if (flood and far.any()) else None
+
     return {
+        "flood_background": None if flood_bg is None else round(flood_bg, 2),
         "spot_x": round(cx, 1), "spot_y": round(cy, 1),
         "core": round(core, 2),
         "halo_r50": None if flood else r50,
@@ -237,7 +246,7 @@ FEATURE_COLUMNS = [
     "label", "material_class", "material_subclass", "surface", "transparency",
     "angle_index", "channel", "wavelength_nm", "ir_laser",
     "core", "halo_r50", "halo_r10", "halo_energy_10_40", "speckle",
-    "add_r", "add_g", "add_b", "flood", "saturated_core",
+    "add_r", "add_g", "add_b", "flood", "flood_background", "saturated_core",
     "ir_core", "ir_halo_r50", "ir_halo_r10", "ir_halo_energy_10_40", "ir_speckle",
     "ir_saturated_core",
     "red_green_ratio", "red2_green_ratio",

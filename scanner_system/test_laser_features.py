@@ -120,3 +120,11 @@ def test_pre_single_session_scan_is_skipped():
         _make_scan(tmp)
         os.unlink(os.path.join(tmp, "exposure.json"))
         assert lf.compute_features(tmp) is None
+
+
+def test_flood_background_reported_only_for_flood_channels():
+    with tempfile.TemporaryDirectory() as tmp:
+        _make_scan(tmp, flood_level=40.0)
+        chs = lf.compute_features(tmp)["channels"]
+        assert chs["4"]["flood"] is True and abs(chs["4"]["flood_background"] - 40.0) < 2.0
+        assert chs["1"]["flood_background"] is None

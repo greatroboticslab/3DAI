@@ -68,7 +68,7 @@ ENTRY_COLUMNS = [
                          # laser scatter feature (tight halo = glossy, wide = matte).
     "transparency",      # opaque / translucent / transparent. Ground truth for
                          # subsurface scatter (the wide glow under a laser spot).
-    "angles",            # poses per object, e.g. 3 = scan at 3 orientations. Blank = 1.
+    "angles",            # poses per object, e.g. 3 = scan at 3 orientations. Blank = 2.
     "known_height_mm",   # caliper height of a FLAT MATTE object as placed for pose 1.
                          # Fill only for flat-topped objects: it becomes a
                          # calibration anchor. Blank = not an anchor.
@@ -107,6 +107,11 @@ DEFAULT_LASER_CHANNELS = [1, 2, 3, 4]
 # "partial" and "failed" rows are retried, which is usually what you want after
 # fixing whatever was wrong at the bench.
 DONE_STATUSES = {"complete"}
+
+# Poses per object when the angles cell is blank. A spot laser samples one
+# point of a surface; a second pose samples another. Operator decision
+# 2026-09-05 for the 200-object collection.
+DEFAULT_ANGLES = 2
 
 
 class ManifestError(Exception):
@@ -179,7 +184,7 @@ def validate_row(row: dict[str, Any], number: int) -> dict[str, Any]:
         if not (1 <= angles <= 12):
             raise ManifestError(f"row {number}: angles must be 1-12, got {angles}")
     else:
-        angles = 1
+        angles = DEFAULT_ANGLES
 
     surface = _clean(row.get("surface")).lower() or None
     if surface and surface not in SURFACE_FINISHES:
