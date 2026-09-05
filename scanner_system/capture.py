@@ -40,12 +40,19 @@ def _rel(path: str) -> str:
 # Tune for a rig via SCANNER_SCAN_ROI="x0,y0,x1,y1".
 #
 # The default is MEASURED, not guessed, and must be re-measured whenever the
-# Kinect or projector moves: project black, project gray 110, diff the two
-# camera frames, take the lit bounding box plus 3% pad. Measured 2026-09-05
-# after the Kinect was repositioned (lit bbox x 32-1119, y 172-883 in the
-# 1920x1080 frame). The previous default (0.24, 0.34, 0.52, 0.64) was tuned
-# for the old camera pose and cut off everything left of x=460, a quarter of
-# the frame, including part of the projector zone.
+# Kinect or projector moves. Method that actually works: take a fringe
+# capture's highest-frequency stack and run
+# fpp_tools.temporal_unwrap.footprint_from_amplitude on it - fringes exist
+# only under DIRECT projection, so the amplitude footprint is the projector
+# zone. Thresholding a projector-on minus projector-off difference does NOT
+# work: in a dark room the projector's spill bounces off everything and the
+# "lit" box swallows half the frame, and any ambient change between the two
+# frames fakes lit area too (both failure modes observed 2026-09-05).
+#
+# Measured 2026-09-05 after the Kinect was repositioned: fringe footprint
+# x 334-1123, y 127-663 in the 1920x1080 frame, plus 3% pad. The previous
+# default (0.24, 0.34, 0.52, 0.64) was tuned for the old camera pose and cut
+# off everything left of x=460, a quarter of the frame width.
 def _scan_roi() -> tuple[float, float, float, float]:
     raw = os.getenv("SCANNER_SCAN_ROI", "").strip()
     if raw:
@@ -54,7 +61,7 @@ def _scan_roi() -> tuple[float, float, float, float]:
             return x0, y0, x1, y1
         except Exception:
             pass
-    return 0.00, 0.13, 0.61, 0.85
+    return 0.14, 0.09, 0.61, 0.64
 
 
 def _crop_to_roi(path: str) -> Optional[int]:
