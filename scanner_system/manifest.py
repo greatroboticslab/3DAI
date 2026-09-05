@@ -358,11 +358,30 @@ def write_results(path: str, row_number: int, results: dict[str, Any]) -> None:
     """
     ext = os.path.splitext(path)[1].lower()
     if ext in (".xlsx", ".xlsm"):
-        _write_results_xlsx(path, row_number, results)
+        writer = _write_results_xlsx
     elif ext == ".csv":
-        _write_results_csv(path, row_number, results)
+        writer = _write_results_csv
     else:
         raise ManifestError(f"unsupported manifest type {ext!r}")
+
+    # A spreadsheet app (LibreOffice, Excel) holding the file open makes the
+    # save raise PermissionError. The scan itself is already safe in the
+    # database at this point; what would be lost is the row's write-back, and
+    # with it the resume marker. So wait for the collector rather than crash:
+    # a person is at the bench, and closing a window is the whole fix.
+    import time as _time
+    for attempt in range(100):          # ~5 minutes at 3 s
+        try:
+            writer(path, row_number, results)
+            return
+        except PermissionError:
+            if attempt == 0:
+                print(f"    ! {os.path.basename(path)} is open in another program "
+                      "(LibreOffice/Excel?). Close it there; I'll keep retrying...")
+            _time.sleep(3)
+    raise ManifestError(
+        f"{path} stayed locked for 5 minutes; results for row {row_number} were "
+        "not written to the sheet (the scan is still in the database)")
 
 
 def _write_results_xlsx(path: str, row_number: int, results: dict[str, Any]) -> None:
