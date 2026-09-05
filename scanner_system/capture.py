@@ -38,6 +38,14 @@ def _rel(path: str) -> str:
 # sits where the projector/lasers converge, so a fixed central ROI isolates it
 # and drops the surrounding lab clutter, giving clean, presentable frames.
 # Tune for a rig via SCANNER_SCAN_ROI="x0,y0,x1,y1".
+#
+# The default is MEASURED, not guessed, and must be re-measured whenever the
+# Kinect or projector moves: project black, project gray 110, diff the two
+# camera frames, take the lit bounding box plus 3% pad. Measured 2026-09-05
+# after the Kinect was repositioned (lit bbox x 32-1119, y 172-883 in the
+# 1920x1080 frame). The previous default (0.24, 0.34, 0.52, 0.64) was tuned
+# for the old camera pose and cut off everything left of x=460, a quarter of
+# the frame, including part of the projector zone.
 def _scan_roi() -> tuple[float, float, float, float]:
     raw = os.getenv("SCANNER_SCAN_ROI", "").strip()
     if raw:
@@ -46,7 +54,7 @@ def _scan_roi() -> tuple[float, float, float, float]:
             return x0, y0, x1, y1
         except Exception:
             pass
-    return 0.24, 0.34, 0.52, 0.64
+    return 0.00, 0.13, 0.61, 0.85
 
 
 def _crop_to_roi(path: str) -> Optional[int]:
