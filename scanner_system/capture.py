@@ -154,6 +154,53 @@ def _kinect_grab(out_path: str) -> dict[str, Any]:
     return {"ok": False, "detail": tail[0] or (proc.stderr or "").strip()[-200:] or "Kinect grab failed."}
 
 
+_LASER_SEQ_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "kinect_laser_sequence.py")
+
+
+def _laser_sequence(scan_dir: str, channels: list[int], port: str) -> dict[str, Any]:
+    """Capture dark + every laser frame in one KinectEnv session.
+
+    Returns {ok, captured: {"dark": path, ch: path}, errors: {ch: reason},
+    detail}. Never raises; a missing sensor or board comes back ok=False.
+    """
+    import subprocess
+
+    out_dir = os.path.join(scan_dir, "laser")
+    os.makedirs(out_dir, exist_ok=True)
+    if not os.path.isfile(KINECT_PYTHON):
+        return {"ok": False, "captured": {}, "errors": {},
+                "detail": f"Kinect interpreter not found at {KINECT_PYTHON}"}
+    try:
+        proc = subprocess.run(
+            [KINECT_PYTHON, _LASER_SEQ_SCRIPT, out_dir,
+             ",".join(str(c) for c in channels), "--port", port],
+            capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "captured": {}, "errors": {},
+                "detail": "laser sequence timed out (90s)"}
+    except Exception as exc:
+        return {"ok": False, "captured": {}, "errors": {},
+                "detail": f"laser sequence failed to launch: {exc}"}
+
+    captured: dict[Any, str] = {}
+    errors: dict[int, str] = {}
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split(maxsplit=2)
+        if len(parts) == 3 and parts[0] == "OK":
+            key = "dark" if parts[1] == "dark" else int(parts[1][2:]) if parts[1].startswith("ch") else parts[1]
+            captured[key] = parts[2]
+        elif parts and parts[0] == "ERR":
+            # channel-specific or fatal
+            if len(parts) >= 2 and parts[1].startswith("ch"):
+                errors[int(parts[1][2:])] = line[4:]
+    # A fatal ERR (no board, no camera) leaves nothing captured.
+    if not captured:
+        tail = (proc.stdout or proc.stderr or "").strip().splitlines()[-1:] or ["laser sequence produced no frames"]
+        return {"ok": False, "captured": {}, "errors": errors, "detail": tail[0]}
+    return {"ok": True, "captured": captured, "errors": errors, "detail": ""}
+
+
 def _reconstruct_height(scan_id, sample_id, fringe_dir, repo_root, d):
     """Robust wrapped-phase 3D reconstruction of a fringe capture -> height map.
 
@@ -274,89 +321,53 @@ def run_capture(
         # light on the sample (its normal image otherwise washes the scene out).
         projector = _start_projector_black()
         time.sleep(0.8)  # let the black window come up before firing
-        RelayController = hardware._load_relay_controller()
-        rc = None
         try:
-            if RelayController is None:
-                raise RuntimeError("relay controller unavailable (pyserial?)")
             p = port or hardware.likely_esp32_port()
             if p is None:
                 raise RuntimeError("no ESP32 serial port found (is it plugged in "
                                    "with a data cable?)")
-            rc = RelayController(p)
-            if not hardware._connect_with_retry(rc, attempts=6):
-                raise RuntimeError(f"no response from ESP32 on {p} "
-                                   "(port busy or board resetting)")
+            # Capture the dark reference AND every laser frame in ONE camera
+            # session (kinect_laser_sequence.py). The old path shelled out a
+            # fresh process per frame, so each frame re-triggered the Kinect's
+            # auto-exposure and the dark/lit frames did not share an exposure
+            # state -- a background offset of -3 to -15 leaked into every
+            # laser-minus-dark result, worst on the faint channels. Exposure
+            # cannot be locked on the Kinect V2 (SDK is read-only), so the fix
+            # is to hold the camera open; measured residual drift then ~0.
+            res = _laser_sequence(scan_dir, laser_channels, p)
+            if not res["ok"]:
+                raise RuntimeError(res["detail"])
 
-            # Ambient dark frame: projector black, ALL lasers driven off first.
-            # Downstream material analysis subtracts this from each laser frame
-            # to isolate what that one laser adds to the scene. Without it the
-            # faint channels are unusable: CH3 is a genuine smudge of a laser
-            # and its contribution is invisible against the auto-exposed
-            # ambient (~130 mean in a dark room). Known limit: each grab is a
-            # separate process, so auto-exposure re-converges per frame and the
-            # subtraction is approximate, worst under CH4's green flood.
-            rc.safe_all()
-            time.sleep(0.3)
-            dark = os.path.join(scan_dir, "laser", "dark.png")
-            dgrab = _kinect_grab(dark)
-            if dgrab["ok"]:
-                # Cropped with the same box as the laser frames so the
-                # laser-minus-dark subtraction stays pixel-aligned.
-                dsize = _crop_to_roi(dark) or dgrab.get("size_bytes")
+            captured = res["captured"]      # {"dark": path, ch: path, ...}
+            if "dark" in captured:
+                dark = captured["dark"]
+                dsize = _crop_to_roi(dark) or os.path.getsize(dark)
                 scanner_db.register_artifact(
                     scan_id, sample_id, "laser", "laser_dark_png",
-                    _rel(dark), media_type="image/png",
-                    size_bytes=dsize,
-                    db=d)
-            else:
-                scanner_db.record_instrument(
-                    scan_id, "laser_dark", "failed", detail=dgrab["detail"], db=d)
+                    _rel(dark), media_type="image/png", size_bytes=dsize, db=d)
 
             any_ok = False
             for ch in laser_channels:
-                # fire this laser, capture, then turn it off
-                if not rc.set_channel(ch, True):
+                if ch not in captured:
                     scanner_db.record_instrument(
                         scan_id, f"laser_ch{ch}", "failed",
-                        detail=f"could not turn CH{ch} ON", db=d)
+                        detail=res["errors"].get(ch, "not captured"), db=d)
                     continue
-                time.sleep(0.3)  # settle
+                any_ok = True
+                out = captured[ch]
                 wl = wavelengths.get(ch) or schema.LASER_WAVELENGTHS_NM.get(ch)
-                out = os.path.join(scan_dir, "laser", f"las{ch}.png")
-                grab = _kinect_grab(out)
-                rc.set_channel(ch, False)
-                if grab["ok"]:
-                    any_ok = True
-                    # Same crop as every other png. The current box was checked
-                    # against the measured laser spots (CH1 ~799,443; CH2
-                    # ~570,528 -- both well inside); if the lasers are ever
-                    # re-aimed, re-check before tightening this box.
-                    size = _crop_to_roi(out) or grab.get("size_bytes")
-                    scanner_db.register_artifact(
-                        scan_id, sample_id, "laser", f"laser_ch{ch}_png",
-                        _rel(out), media_type="image/png",
-                        size_bytes=size,
-                        laser_state=schema.build_laser_state(ch, wavelength_nm=wl),
-                        db=d)
-                else:
-                    scanner_db.record_instrument(
-                        scan_id, f"laser_ch{ch}", "failed",
-                        detail=grab["detail"], db=d)
+                size = _crop_to_roi(out) or os.path.getsize(out)
+                scanner_db.register_artifact(
+                    scan_id, sample_id, "laser", f"laser_ch{ch}_png",
+                    _rel(out), media_type="image/png", size_bytes=size,
+                    laser_state=schema.build_laser_state(ch, wavelength_nm=wl),
+                    db=d)
             scanner_db.record_instrument(
                 scan_id, "laser", "ok" if any_ok else "failed",
                 detail="" if any_ok else "no laser frames captured", db=d)
         except Exception as exc:
             scanner_db.record_instrument(scan_id, "laser", "failed", detail=str(exc), db=d)
         finally:
-            # never leave a laser on
-            if rc is not None:
-                try:
-                    for ch in laser_channels:
-                        rc.set_channel(ch, False)
-                except Exception:
-                    pass
-                rc.disconnect()
             _stop_projector(projector)  # restore the projector
     elif mode in ("full", "laser_only"):
         scanner_db.record_instrument(scan_id, "laser", "skipped",
