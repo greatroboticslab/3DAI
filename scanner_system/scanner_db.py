@@ -159,6 +159,16 @@ def start_scan(sample_id, mode="full", operator=None, notes="", angle=None,
     return doc["_id"]
 
 
+def set_scan_meta(scan_id, fields: dict, db=None) -> None:
+    """Merge derived, top-level fields into a scan document.
+
+    Used for capture provenance (capture_config), fringe_features and any
+    later derived product. Merging keeps unrelated fields intact.
+    """
+    d = get_db(db)
+    d["scans"].update_one({"_id": scan_id}, {"$set": dict(fields)})
+
+
 def set_laser_features(scan_id, features, db=None) -> None:
     """Store the computed per-channel laser material features on a scan.
 

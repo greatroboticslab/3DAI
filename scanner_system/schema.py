@@ -43,7 +43,7 @@ INSTRUMENT_STATUSES = ("ok", "skipped", "failed")
 
 # Post-processing steps that are recorded like instruments but are derived
 # from stored frames and recomputable offline. They never decide scan status.
-DERIVED_INSTRUMENTS = frozenset({"reconstruction", "laser_features", "laser_dark"})
+DERIVED_INSTRUMENTS = frozenset({"reconstruction", "laser_features", "fringe_features", "laser_dark"})
 
 SCAN_STATUSES = ("running", "complete", "partial", "failed")
 

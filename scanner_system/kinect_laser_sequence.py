@@ -72,6 +72,39 @@ def _grab_ir(k, timeout=2.0):
     return None
 
 
+def _grab_depth(k, timeout=2.0):
+    """Latest depth frame as uint16 millimetres (512x424), or None."""
+    h, w = k.depth_frame_desc.Height, k.depth_frame_desc.Width
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if k.has_new_depth_frame():
+            return k.get_last_depth_frame().reshape((h, w)).astype(np.uint16)
+        time.sleep(0.003)
+    return None
+
+
+def _trace(k, seconds, x0, y0, x1, y1):
+    """Per-frame intensity trace over the scan crop for `seconds`.
+
+    Returns (t, mean, top1) arrays: time since call, mean crop intensity, and
+    the mean of the brightest 1% of crop pixels (tracks the laser spot without
+    knowing where it is yet). This is the on/off transient Dr. Zhang asked
+    for, recorded honestly: at ~30 fps it resolves relay timing and the
+    camera's own auto-exposure settling, not sub-frame material physics.
+    """
+    h, w = k.color_frame_desc.Height, k.color_frame_desc.Width
+    t0 = time.perf_counter(); ts, means, tops = [], [], []
+    while time.perf_counter() - t0 < seconds:
+        if k.has_new_color_frame():
+            f = k.get_last_color_frame().reshape((h, w, 4))[y0:y1, x0:x1, :3]
+            g = f.mean(axis=2)
+            ts.append(time.perf_counter() - t0); means.append(float(g.mean()))
+            tops.append(float(np.partition(g.ravel(), -max(1, g.size // 100))[-max(1, g.size // 100):].mean()))
+        else:
+            time.sleep(0.002)
+    return np.array(ts), np.array(means, np.float32), np.array(tops, np.float32)
+
+
 def _wait_frame(k, timeout=12.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -88,6 +121,10 @@ def main(argv=None) -> int:
     ap.add_argument("--port", default="COM3")
     ap.add_argument("--settle", type=float, default=0.4,
                     help="seconds between firing a laser and grabbing")
+    ap.add_argument("--edge", type=float, default=1.0,
+                    help="seconds of intensity trace to record across each on/off edge")
+    ap.add_argument("--roi", default="0.12,0.05,0.65,0.72",
+                    help="crop fractions x0,y0,x1,y1 for the transient trace")
     args = ap.parse_args(argv)
 
     channels = [int(c) for c in args.channels.split(",") if c.strip()]
@@ -120,6 +157,19 @@ def main(argv=None) -> int:
             print("ERR no color frame in 12s (check power brick + USB3)")
             return 2
         _grab(k)  # discard the first, proves frames flow
+        H, W = k.color_frame_desc.Height, k.color_frame_desc.Width
+        fx0, fy0, fx1, fy1 = (float(v) for v in args.roi.split(","))
+        cx0, cy0, cx1, cy1 = int(fx0 * W), int(fy0 * H), int(fx1 * W), int(fy1 * H)
+        transient = {}
+
+        # Absolute depth from the Kinect's time-of-flight sensor: metric 3D
+        # shape independent of the projector calibration. Lasers do not
+        # matter for it; one frame per scan.
+        depth = _grab_depth(k)
+        if depth is not None:
+            dpath = os.path.join(args.out_dir, "depth.png")
+            cv2.imwrite(dpath, depth)
+            print(f"OK depth {dpath}")
 
         # Dark reference first, all lasers off, same session as the lit frames.
         rc.safe_all()
@@ -136,13 +186,25 @@ def main(argv=None) -> int:
             print(f"OK dark_ir {ir_path}")
 
         for ch in channels:
+            # ON edge: start recording, then fire, so the step is inside the trace.
+            t_on = _trace_start = time.perf_counter()
+            pre_t, pre_m, pre_p = _trace(k, min(0.25, args.edge / 4), cx0, cy0, cx1, cy1)
             if not rc.set_channel(ch, True):
                 print(f"ERR ch{ch} could not turn ON")
                 continue
-            time.sleep(args.settle)
+            on_t, on_m, on_p = _trace(k, args.edge, cx0, cy0, cx1, cy1)
+            time.sleep(max(0.0, args.settle - 0.1))
             lit, e, g = _grab(k)
             ir = _grab_ir(k)             # same lit moment, infrared sensor
+            # OFF edge
+            off0 = time.perf_counter()
             rc.set_channel(ch, False)
+            off_t, off_m, off_p = _trace(k, args.edge, cx0, cy0, cx1, cy1)
+            transient[f"ch{ch}"] = {
+                "pre_t": pre_t, "pre_mean": pre_m, "pre_top1": pre_p,
+                "on_t": on_t, "on_mean": on_m, "on_top1": on_p,
+                "off_t": off_t, "off_mean": off_m, "off_top1": off_p,
+            }
             out = os.path.join(args.out_dir, f"las{ch}.png")
             cv2.imwrite(out, lit)
             exposure_log[f"ch{ch}"] = {"exposure_100ns": e, "gain": g}
@@ -159,6 +221,11 @@ def main(argv=None) -> int:
             k.close()
         with open(os.path.join(args.out_dir, "exposure.json"), "w") as f:
             json.dump(exposure_log, f, indent=2)
+        if transient:
+            flat = {f"{ch}_{k}": v for ch, d in transient.items() for k, v in d.items()}
+            tpath = os.path.join(args.out_dir, "transient.npz")
+            np.savez_compressed(tpath, **flat)
+            print(f"OK transient {tpath}")
 
     return 0
 

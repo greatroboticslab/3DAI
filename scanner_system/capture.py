@@ -202,6 +202,30 @@ def _laser_sequence(scan_dir: str, channels: list[int], port: str) -> dict[str, 
     return {"ok": True, "captured": captured, "errors": errors, "detail": ""}
 
 
+def _reference_dir(repo_root: str) -> str:
+    """Empty-stage fringe reference in effect (see _reconstruct_height)."""
+    calib_dir = os.path.join(repo_root, "data", "scan_test", "calib_new")
+    return os.getenv("SCANNER_FRINGE_REFERENCE",
+                     os.path.join(calib_dir, "ref20_20260905"))
+
+
+def _calibration_file(repo_root: str) -> str:
+    calib_dir = os.path.join(repo_root, "data", "scan_test", "calib_new")
+    return os.getenv("SCANNER_HEIGHT_CALIB",
+                     os.path.join(calib_dir, "calibration_temporal_20260731.txt"))
+
+
+def _git_commit(repo_root: str) -> Optional[str]:
+    """Short commit of the capture code, best effort (provenance only)."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "-C", repo_root, "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=10, check=False)
+        return r.stdout.strip() or None
+    except Exception:
+        return None
+
+
 def _reconstruct_height(scan_id, sample_id, fringe_dir, repo_root, d):
     """Robust wrapped-phase 3D reconstruction of a fringe capture -> height map.
 
@@ -312,6 +336,21 @@ def run_capture(
                                     known_height_mm=known_height_mm, db=d)
     scan_dir = os.path.join(STORAGE_ROOT, "scans", scan_id)
 
+    # Provenance: everything that would change the numbers if the rig, the
+    # calibration or the code changed under the collection. Without this a
+    # later analysis cannot tell scan #40 from scan #140 after a bump.
+    _repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    scanner_db.set_scan_meta(scan_id, {"capture_config": {
+        "reference_dir": os.path.basename(_reference_dir(_repo)),
+        "calibration_file": os.path.basename(_calibration_file(_repo)),
+        "scan_roi": list(_scan_roi()),
+        "projector_maxval": int(os.getenv("SCANNER_PROJECTOR_MAXVAL", "20")),
+        "wavelengths_nm": {str(k): v for k, v in schema.LASER_WAVELENGTHS_NM.items()},
+        "laser_channels": list(laser_channels),
+        "single_session_laser": True,
+        "code_commit": _git_commit(_repo),
+    }}, db=d)
+
     wants_laser = mode in ("full", "laser_only") and laser_channels
     wants_kinect_plain = mode in ("full", "kinect_projector", "kinect_only")
     wants_projector = mode in ("full", "kinect_projector", "projector_only")
@@ -355,6 +394,15 @@ def run_capture(
                     scan_id, sample_id, "laser", "laser_dark_ir_png",
                     _rel(p_ir), media_type="image/png",
                     size_bytes=os.path.getsize(p_ir), db=d)
+            # Kinect time-of-flight depth (uint16 mm, 512x424): metric 3D shape
+            # independent of the projector calibration. Captured once per scan.
+            if "depth" in captured:
+                p_d = captured["depth"]
+                scanner_db.register_artifact(
+                    scan_id, sample_id, "kinect", "kinect_depth_png",
+                    _rel(p_d), media_type="image/png",
+                    size_bytes=os.path.getsize(p_d),
+                    metadata={"units": "mm", "sensor": "kinect_v2_tof"}, db=d)
 
             any_ok = False
             for ch in laser_channels:
@@ -380,6 +428,18 @@ def run_capture(
                         scan_id, sample_id, "laser", f"laser_ch{ch}_ir_png",
                         _rel(p_ir), media_type="image/png",
                         size_bytes=os.path.getsize(p_ir), laser_state=state, db=d)
+            # Per-channel on/off intensity traces (Dr. Zhang's transient ask).
+            if "transient" in captured:
+                p_t = captured["transient"]
+                scanner_db.register_artifact(
+                    scan_id, sample_id, "laser", "laser_transient_npz",
+                    _rel(p_t), media_type="application/x-npz",
+                    size_bytes=os.path.getsize(p_t),
+                    metadata={"note": "crop mean and top-1% intensity vs time across "
+                                      "each laser's on and off edge at ~30 fps; "
+                                      "resolves relay timing and auto-exposure "
+                                      "settling, not sub-frame material physics"},
+                    db=d)
             scanner_db.record_instrument(
                 scan_id, "laser", "ok" if any_ok else "failed",
                 detail="" if any_ok else "no laser frames captured", db=d)
@@ -457,6 +517,23 @@ def run_capture(
                         _rel(npz), media_type="application/x-npz",
                         size_bytes=os.path.getsize(npz), db=d)
                     _reconstruct_height(scan_id, sample_id, fringe_dir, repo_root, d)
+                    # Calibration-free material signal from the same stack:
+                    # how well the surface holds the fringes, and its albedo.
+                    try:
+                        from . import fringe_features
+                        ff = fringe_features.compute_fringe_features(
+                            fringe_dir, _reference_dir(repo_root))
+                        if ff:
+                            scanner_db.set_scan_meta(scan_id, {"fringe_features": ff}, db=d)
+                            scanner_db.record_instrument(scan_id, "fringe_features", "ok", db=d)
+                        else:
+                            scanner_db.record_instrument(
+                                scan_id, "fringe_features", "failed",
+                                detail="no reference/stack or no background region", db=d)
+                    except Exception as exc:
+                        scanner_db.record_instrument(
+                            scan_id, "fringe_features", "failed",
+                            detail=f"{type(exc).__name__}: {exc}"[:300], db=d)
                 scanner_db.record_instrument(scan_id, "projector", "ok", db=d)
             else:
                 detail = (proc.stderr or proc.stdout or "").strip()[-200:] or "fringe capture failed"

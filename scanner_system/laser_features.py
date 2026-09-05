@@ -241,6 +241,10 @@ FEATURE_COLUMNS = [
     "ir_core", "ir_halo_r50", "ir_halo_r10", "ir_halo_energy_10_40", "ir_speckle",
     "ir_saturated_core",
     "red_green_ratio", "red2_green_ratio",
+    # per-scan projector/fringe features (same value on every channel row)
+    "fringe_contrast_object", "fringe_contrast_background", "fringe_contrast_ratio",
+    "fringe_albedo_object", "fringe_albedo_background", "fringe_reliable_fraction",
+    "fringe_object_px",
     "sample_id", "scan_id",
 ]
 
@@ -249,6 +253,7 @@ def feature_rows(sample: dict[str, Any], scan: dict[str, Any],
                  wavelengths: dict[int, Optional[int]]) -> list[dict[str, Any]]:
     """Flatten a scan's stored features into FEATURE_COLUMNS rows."""
     feats = scan.get("laser_features") or {}
+    fringe = scan.get("fringe_features") or {}
     ctx = sample.get("context") or {}
     mat = sample.get("material") or {}
     rows = []
@@ -269,5 +274,7 @@ def feature_rows(sample: dict[str, Any], scan: dict[str, Any],
         for k in FEATURE_COLUMNS:
             if k in f:
                 row[k] = f[k]
+            elif k in fringe:
+                row[k] = fringe[k]
         rows.append({k: row.get(k) for k in FEATURE_COLUMNS})
     return rows

@@ -185,7 +185,11 @@ def temporal_delta_phase(
         raise ValueError("ref_stacks and obj_stacks must have the same length")
     if not ref_list:
         raise ValueError("at least one phase stack is required")
-    if any(ref.shape != obj.shape for ref, obj in zip(ref_list, obj_list, strict=True)):
+    # NOTE: fpp_tools runs under C:\KinectEnv (Python 3.9) for live
+    # reconstruction; zip(strict=) is 3.10+ and broke every height map when a
+    # linter-driven edit added it (2026-09-05). The length check above already
+    # guards this zip. Keep this module 3.9-compatible.
+    if any(ref.shape != obj.shape for ref, obj in zip(ref_list, obj_list)):
         raise ValueError("reference and object stacks must have matching shapes")
 
     if footprint is None:
