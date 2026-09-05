@@ -265,7 +265,12 @@ def run_capture(
                 rc.set_channel(ch, False)
                 if grab["ok"]:
                     any_ok = True
-                    size = _crop_to_roi(out) or grab.get("size_bytes")
+                    # Laser frames are NOT cropped to the scan ROI. The laser
+                    # spots land wherever the modules are aimed, and on this rig
+                    # CH2's spot sits at x~559, left of the ROI's x0 -- cropping
+                    # was amputating the laser interaction region, which is the
+                    # entire signal for material recognition. Full frame it is.
+                    size = grab.get("size_bytes") or os.path.getsize(out)
                     scanner_db.register_artifact(
                         scan_id, sample_id, "laser", f"laser_ch{ch}_png",
                         _rel(out), media_type="image/png",
