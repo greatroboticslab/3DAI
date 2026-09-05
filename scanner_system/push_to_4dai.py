@@ -27,6 +27,10 @@ from scanner_system import scanner_db, capture
 
 FOURDAI_URL = os.getenv("FOURDAI_URL", "http://127.0.0.1:8000").rstrip("/")
 
+# Artifact roles that are inputs or renders, not sample images. See the
+# upload loop for why each is excluded; *_ir_png roles are excluded there too.
+SKIP_ROLES = frozenset({"laser_dark_png", "laser_dark_ir_png", "height_map_png"})
+
 
 def publish_scan(scan_id: str, category: str = "materials",
                  fourdai_url: str = FOURDAI_URL, db=None) -> dict:
@@ -53,6 +57,22 @@ def publish_scan(scan_id: str, category: str = "materials",
             "material_subclass": material.get("subclass"),
             "scanner_sample_id": pkg["sample_id"],   # back-reference / shared key
             "scanner_scan_id": scan_id,
+            # 4DAI renames every upload to <uuid>.jpg and keeps only the path,
+            # so modality/role/wavelength would not survive the push. The
+            # data blob IS persisted, so carry the artifact manifest, the pose
+            # and the measured laser features here.
+            "surface": (sample.get("context") or {}).get("surface"),
+            "transparency": (sample.get("context") or {}).get("transparency"),
+            "angle": pkg.get("angle"),
+            "laser_features": pkg.get("laser_features"),
+            "artifacts": [
+                {"role": a.get("role"), "modality": m,
+                 "wavelength_nm": (a.get("laser_state") or {}).get("wavelength_nm")}
+                for m, arts in pkg["artifacts"].items() for a in arts
+                if str(a.get("file_path", "")).endswith(".png")
+                and a.get("role") not in SKIP_ROLES
+                and not str(a.get("role", "")).endswith("_ir_png")
+            ],
         },
     }, timeout=30)
     sub.raise_for_status()
@@ -63,7 +83,17 @@ def publish_scan(scan_id: str, category: str = "materials",
     for modality, arts in pkg["artifacts"].items():
         for a in arts:
             fp = str(a.get("file_path", ""))
+            role = str(a.get("role", ""))
             if not fp.endswith(".png"):
+                continue
+            # Not sample images: the dark references carry no material
+            # information alone (they are subtraction inputs), the height
+            # render is a colormap of currently-stale calibration, and the
+            # infrared frames are 16-bit PNGs that 4DAI's viewer cannot
+            # display (Pillow refuses to JPEG-encode mode I;16, so View Data
+            # raised OSError on every pushed scan). The features derived from
+            # all of these travel in the submission's data blob instead.
+            if role in SKIP_ROLES or role.endswith("_ir_png"):
                 continue
             path = os.path.join(capture.STORAGE_ROOT, fp)
             if not os.path.isfile(path):

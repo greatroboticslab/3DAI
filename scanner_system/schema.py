@@ -41,6 +41,10 @@ CAPTURE_MODES = (
 # succeeded vs. what was requested rather than silently producing partial data.
 INSTRUMENT_STATUSES = ("ok", "skipped", "failed")
 
+# Post-processing steps that are recorded like instruments but are derived
+# from stored frames and recomputable offline. They never decide scan status.
+DERIVED_INSTRUMENTS = frozenset({"reconstruction", "laser_features", "laser_dark"})
+
 SCAN_STATUSES = ("running", "complete", "partial", "failed")
 
 # The four lasers, by channel number, matching the ESP32 relay channels
@@ -232,9 +236,18 @@ def resolve_scan_status(results: dict[str, Any]) -> str:
     - all attempted instruments failed     -> "failed"
     - mix of ok and failed                 -> "partial"
     (skipped instruments don't count for/against; they were intentional.)
+
+    Only CAPTURE instruments vote. Derived post-processing steps (height
+    reconstruction, laser feature extraction) and per-channel laser detail
+    entries are recorded in ``results`` for visibility but must not decide
+    the status: they are recomputable offline from the stored frames, and
+    counting them turned a deterministic post-process failure into a
+    "partial" scan that the manifest runner re-queued and re-captured, lasers
+    and all, on every run, forever.
     """
-    attempted = [r.get("status") for r in results.values()
-                 if r.get("status") in ("ok", "failed")]
+    attempted = [r.get("status") for k, r in results.items()
+                 if k not in DERIVED_INSTRUMENTS and not k.startswith("laser_ch")
+                 and r.get("status") in ("ok", "failed")]
     if not attempted:
         return "running"
     if all(s == "ok" for s in attempted):

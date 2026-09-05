@@ -24,9 +24,9 @@ from typing import Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from scanner_system import scanner_db, capture
+from scanner_system import scanner_db, capture, schema
 
 app = FastAPI(title="Scanner API", version="1.0")
 
@@ -37,7 +37,14 @@ class CaptureRequest(BaseModel):
     material_class: Optional[str] = None
     material_subclass: Optional[str] = None
     mode: str = "full"
-    laser_channels: list[int] = [1, 2, 3]
+    # All four lasers by default. This was [1, 2, 3], which silently dropped
+    # the green channel (the reflectance probe) on every 4DAI-driven capture
+    # and left the red/green feature ratios empty.
+    laser_channels: list[int] = Field(default_factory=lambda: list(schema.LASER_CHANNELS))
+    angle: Optional[dict[str, int]] = None   # {"index": k, "count": n} for multi-pose
+    known_height_mm: Optional[float] = None  # caliper height -> calibration anchor
+    operator: Optional[str] = None
+    notes: str = ""
     wait: bool = False                   # True = block until the scan finishes
 
 
@@ -61,11 +68,13 @@ def health():
         return {"status": "db_unavailable", "detail": str(exc)}
 
 
-def _run_capture_bg(sample_id: str, mode: str, laser_channels: list[int]):
+def _run_capture_bg(sample_id: str, req: "CaptureRequest"):
     """Run a capture in the background. Errors are swallowed here; the scan's
     own per-instrument status records what happened."""
     try:
-        capture.run_capture(sample_id, mode=mode, laser_channels=laser_channels)
+        capture.run_capture(sample_id, mode=req.mode, laser_channels=req.laser_channels,
+                            angle=req.angle, known_height_mm=req.known_height_mm,
+                            operator=req.operator, notes=req.notes)
     except Exception:
         pass
 
@@ -95,13 +104,15 @@ def do_capture(req: CaptureRequest, background: BackgroundTasks):
             material_subclass=req.material_subclass, db=db)
 
     if req.wait:
-        pkg = capture.run_capture(sid, mode=req.mode,
-                                  laser_channels=req.laser_channels, db=db)
+        pkg = capture.run_capture(sid, mode=req.mode, laser_channels=req.laser_channels,
+                                  angle=req.angle, known_height_mm=req.known_height_mm,
+                                  operator=req.operator, notes=req.notes, db=db)
         return {"sample_id": sid, "scan_id": pkg["_id"], "status": pkg["status"],
                 "results": {k: v.get("status") for k, v in pkg.get("results", {}).items()},
-                "artifacts": {m: len(v) for m, v in pkg["artifacts"].items() if v}}
+                "artifacts": {m: len(v) for m, v in pkg["artifacts"].items() if v},
+                "angle": pkg.get("angle"), "laser_features": pkg.get("laser_features")}
 
-    background.add_task(_run_capture_bg, sid, req.mode, req.laser_channels)
+    background.add_task(_run_capture_bg, sid, req)
     return {"sample_id": sid, "status": "started",
             "message": "capture running; poll GET /samples/{sample_id}"}
 
@@ -117,6 +128,8 @@ def get_sample(sample_id: str):
     scans = []
     for sc in scanner_db.scans_for_sample(sample_id, db=db):
         pkg = scanner_db.scan_package(sc["_id"], db=db)
+        if pkg is None:          # scan vanished between the two queries
+            continue
         grouped = {m: [_artifact_view(a) for a in v]
                    for m, v in pkg["artifacts"].items() if v}
         scans.append({
@@ -125,6 +138,11 @@ def get_sample(sample_id: str):
             "mode": sc.get("mode"),
             "results": sc.get("results", {}),
             "artifacts": grouped,
+            # The pose and the measured material features are what 4DAI's
+            # material work needs; they were on the document and not exposed.
+            "angle": sc.get("angle"),
+            "known_height_mm": sc.get("known_height_mm"),
+            "laser_features": sc.get("laser_features"),
         })
     return {
         "sample_id": sample_id,

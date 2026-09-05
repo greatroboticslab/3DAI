@@ -132,12 +132,19 @@ def get_sample(sample_id: str, db=None) -> Optional[dict[str, Any]]:
     return get_db(db)["samples"].find_one({"_id": sample_id})
 
 
-def list_samples(db=None, limit: int = 200) -> list[dict[str, Any]]:
-    """Newest samples first (by created_at)."""
+def list_samples(db=None, limit: Optional[int] = None) -> list[dict[str, Any]]:
+    """Newest samples first (by created_at). All of them unless ``limit``.
+
+    The old default of 200 bought no performance (every document was
+    fetched and sorted in Python before slicing) and silently dropped the
+    OLDEST samples once the collection passed 200, which is exactly the
+    target size of the current study; the export bundle then wrote blank
+    labels and an incomplete features sheet for the earliest objects.
+    """
     cur = get_db(db)["samples"].find({})
     docs = list(cur)
     docs.sort(key=lambda s: s.get("created_at", ""), reverse=True)
-    return docs[:limit]
+    return docs if limit is None else docs[:limit]
 
 
 # ── Scans ───────────────────────────────────────────────────────────────────

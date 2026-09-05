@@ -133,6 +133,20 @@ def test_resolve_scan_status():
     expect(schema.resolve_scan_status(skipped) == "running", "only skipped -> running")
     expect(schema.resolve_scan_status({}) == "running", "empty -> running")
 
+    # Derived post-processing must NOT decide the status: a good capture with
+    # a failed (recomputable) reconstruction or feature step stays "complete",
+    # otherwise the manifest runner re-queues and re-captures it forever.
+    derived_fail = {"kinect": {"status": "ok"}, "laser": {"status": "ok"},
+                    "projector": {"status": "ok"},
+                    "reconstruction": {"status": "failed"},
+                    "laser_features": {"status": "failed"},
+                    "laser_ch3": {"status": "failed"}}
+    expect(schema.resolve_scan_status(derived_fail) == "complete",
+           "derived failures do not degrade a complete capture")
+    only_derived = {"reconstruction": {"status": "ok"}}
+    expect(schema.resolve_scan_status(only_derived) == "running",
+           "derived-only results are not an attempted capture")
+
 
 # ── Data layer tests (fake db) ──────────────────────────────────────────────
 
