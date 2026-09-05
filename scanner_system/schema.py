@@ -14,6 +14,7 @@ Binaries live on disk under STORAGE_ROOT; documents hold metadata + file_path.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -51,16 +52,44 @@ LASER_CHANNELS = (1, 2, 3, 4)
 # materials-related modulated information." So the system is effectively
 # multispectral: the wavelength IS a feature dimension for material recognition.
 #
-# Fill in the real per-channel wavelengths for this rig (nm). Some may be IR
-# (>~750nm, invisible to the eye and needing an IR-capable capture). These are
-# placeholders until the actual lasers are confirmed; override at runtime with
-# the SCANNER_LASER_WAVELENGTHS env var (CSV of "ch:nm", e.g. "1:650,2:520,3:850,4:940").
+# NOMINAL wavelengths, set 2026-09-05 by bench inspection, NOT measured. The
+# modules carry no labels. CH1/CH2 look like standard red laser pointers
+# (red pointers are essentially always 650 nm) and their spots read
+# red-dominant on the Kinect. CH4 is a bright green pointer (green pointers
+# are essentially always 532 nm; camera reads G+190 under it). CH3 emits a
+# faint visible smudge of unknown color and stays None until identified.
+# Treat these as class labels ("red", "green"), not spectroscopy. Override
+# with SCANNER_LASER_WAVELENGTHS if the modules are ever measured
+# (CSV of "ch:nm", e.g. "1:650,2:650,3:780,4:532").
 LASER_WAVELENGTHS_NM = {
-    1: None,   # e.g. 650  (red)
-    2: None,   # e.g. 520  (green)
-    3: None,   # e.g. 850  (near-IR)
-    4: None,   # e.g. 940  (IR)
+    1: 650,    # nominal: red pointer, unlabeled module
+    2: 650,    # nominal: red pointer, unlabeled module
+    3: None,   # visible but faint ("smudge"); color/wavelength unidentified
+    4: 532,    # nominal: green pointer, unlabeled module
 }
+
+
+def _apply_wavelength_env() -> None:
+    """Apply SCANNER_LASER_WAVELENGTHS ("ch:nm,ch:nm") over the nominals.
+
+    Promised by the comment above since this module was written, implemented
+    2026-09-05. Malformed entries are ignored so a typo'd env var degrades to
+    the nominal table instead of killing every import of the schema.
+    """
+    raw = os.getenv("SCANNER_LASER_WAVELENGTHS", "").strip()
+    if not raw:
+        return
+    for part in raw.split(","):
+        try:
+            ch_txt, nm_txt = part.split(":", 1)
+            ch = int(ch_txt)
+            if ch in LASER_WAVELENGTHS_NM:
+                LASER_WAVELENGTHS_NM[ch] = int(nm_txt)
+        except ValueError:
+            continue
+
+
+_apply_wavelength_env()
 
 
 def is_ir(wavelength_nm) -> bool:
