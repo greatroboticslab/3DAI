@@ -52,20 +52,26 @@ LASER_CHANNELS = (1, 2, 3, 4)
 # materials-related modulated information." So the system is effectively
 # multispectral: the wavelength IS a feature dimension for material recognition.
 #
-# NOMINAL wavelengths, set 2026-09-05 by bench inspection, NOT measured. The
-# modules carry no labels. CH1/CH2 look like standard red laser pointers
-# (red pointers are essentially always 650 nm) and their spots read
-# red-dominant on the Kinect. CH4 is a bright green pointer (green pointers
-# are essentially always 532 nm; camera reads G+190 under it). CH3 emits a
-# faint visible smudge of unknown color and stays None until identified.
-# Treat these as class labels ("red", "green"), not spectroscopy. Override
-# with SCANNER_LASER_WAVELENGTHS if the modules are ever measured
-# (CSV of "ch:nm", e.g. "1:650,2:650,3:780,4:532").
+# NOMINAL wavelengths, NOT measured. The modules carry no labels; these are
+# what Dr. Zhang recalled on 2026-09-05 (his words: red "630-40", green
+# "530 ish", CH3 "near infrared, maybe 940", not sure of any of them), and
+# they agree with the bench: CH1/CH2 read red-dominant, CH4 reads G+190.
+#
+# CH3 being NEAR-INFRARED explains everything observed about it: to the eye
+# it is a faint glow (only the diode's visible tail), and to the Kinect COLOR
+# camera it is a smudge, because that sensor is filtered for visible light.
+# Its real signal needs the Kinect's INFRARED stream (sensitive near 860 nm),
+# which the pykinect2 wrapper does not currently expose. Until that is wired
+# in, CH3's color-camera artifacts understate it badly.
+#
+# Treat these as class labels (red / red / NIR / green), not spectroscopy.
+# Override with SCANNER_LASER_WAVELENGTHS if the modules are ever measured
+# (CSV of "ch:nm", e.g. "1:635,2:635,3:940,4:530").
 LASER_WAVELENGTHS_NM = {
-    1: 650,    # nominal: red pointer, unlabeled module
-    2: 650,    # nominal: red pointer, unlabeled module
-    3: None,   # visible but faint ("smudge"); color/wavelength unidentified
-    4: 532,    # nominal: green pointer, unlabeled module
+    1: 635,    # nominal: red pointer ("630-40" per PI), unlabeled module
+    2: 635,    # nominal: red pointer ("630-40" per PI), unlabeled module
+    3: 940,    # nominal: near-infrared ("maybe 940" per PI); is_ir() -> True
+    4: 530,    # nominal: green pointer ("530 ish" per PI), unlabeled module
 }
 
 
