@@ -364,15 +364,23 @@ def write_results(path: str, row_number: int, results: dict[str, Any]) -> None:
     else:
         raise ManifestError(f"unsupported manifest type {ext!r}")
 
-    # A spreadsheet app (LibreOffice, Excel) holding the file open makes the
-    # save raise PermissionError. The scan itself is already safe in the
-    # database at this point; what would be lost is the row's write-back, and
-    # with it the resume marker. So wait for the collector rather than crash:
-    # a person is at the bench, and closing a window is the whole fix.
+    _retry_locked(writer, path, row_number, results,
+                  what=f"results for row {row_number}")
+
+
+def _retry_locked(writer, path: str, *args, what: str = "results") -> None:
+    """Call writer(path, *args), waiting out a spreadsheet-app file lock.
+
+    A spreadsheet app (LibreOffice, Excel) holding the file open makes the
+    save raise PermissionError. The scan itself is already safe in the
+    database at this point; what would be lost is the write-back, and with it
+    the resume marker. So wait for the collector rather than crash: a person
+    is at the bench, and closing a window is the whole fix.
+    """
     import time as _time
     for attempt in range(100):          # ~5 minutes at 3 s
         try:
-            writer(path, row_number, results)
+            writer(path, *args)
             return
         except PermissionError:
             if attempt == 0:
@@ -380,8 +388,60 @@ def write_results(path: str, row_number: int, results: dict[str, Any]) -> None:
                       "(LibreOffice/Excel?). Close it there; I'll keep retrying...")
             _time.sleep(3)
     raise ManifestError(
-        f"{path} stayed locked for 5 minutes; results for row {row_number} were "
-        "not written to the sheet (the scan is still in the database)")
+        f"{path} stayed locked for 5 minutes; {what} were not written to the "
+        "sheet (the scan is still in the database)")
+
+
+FEATURES_SHEET = "laser_features"
+
+
+def write_features(path: str, rows: list[dict[str, Any]]) -> None:
+    """Append laser feature rows: a second tab of the workbook, or for a CSV
+    manifest a sibling ``<name>_laser_features.csv``.
+
+    These are the measured laser numbers (scatter halo, reflectance colour,
+    speckle, infrared equivalents), one row per scan per channel. They sit on
+    their own tab so the collection tab stays a work queue.
+    """
+    if not rows:
+        return
+    from .laser_features import FEATURE_COLUMNS
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".xlsx", ".xlsm"):
+        _retry_locked(_append_features_xlsx, path, rows, FEATURE_COLUMNS,
+                      what="laser features")
+    else:
+        side = os.path.splitext(path)[0] + "_laser_features.csv"
+        _retry_locked(_append_features_csv, side, rows, FEATURE_COLUMNS,
+                      what="laser features")
+
+
+def _append_features_xlsx(path: str, rows, columns) -> None:
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font
+
+    wb = load_workbook(path)
+    if FEATURES_SHEET in wb.sheetnames:
+        ws = wb[FEATURES_SHEET]
+    else:
+        ws = wb.create_sheet(FEATURES_SHEET)
+        ws.append(columns)
+        for c in ws[1]:
+            c.font = Font(bold=True)
+        ws.freeze_panes = "A2"
+    for r in rows:
+        ws.append([r.get(c) for c in columns])
+    wb.save(path)
+
+
+def _append_features_csv(path: str, rows, columns) -> None:
+    new = not os.path.isfile(path)
+    with open(path, "a", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        if new:
+            w.writerow(columns)
+        for r in rows:
+            w.writerow(["" if r.get(c) is None else r.get(c) for c in columns])
 
 
 def _write_results_xlsx(path: str, row_number: int, results: dict[str, Any]) -> None:
@@ -569,6 +629,14 @@ def run_manifest(
                 db=db,
             )
             summaries.append(_summarize(pkg))
+
+            # The measured laser features land on their own tab right away,
+            # so the collector can watch materials separate as objects go by.
+            if pkg.get("laser_features"):
+                from . import laser_features
+                sample_doc = scanner_db.get_sample(sample_id, db=db) or {"_id": sample_id}
+                write_features(path, laser_features.feature_rows(
+                    sample_doc, pkg, schema.LASER_WAVELENGTHS_NM))
 
         summary = _aggregate(summaries)
         summary["sample_id"] = sample_id

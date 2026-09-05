@@ -93,7 +93,18 @@ def build_bundle(
             counts[("modality", row.get("modality") or "?")] += 1
             counts[("pose", pose)] += 1
 
-        zf.writestr("metadata.xlsx", _metadata_xlsx_bytes(exported, counts, missing))
+        # Measured laser features (scatter halo, reflectance, speckle, IR),
+        # one row per scan per channel: the numbers a model trains on.
+        from . import schema
+        from .laser_features import feature_rows
+        feats = []
+        for sample in scanner_db.list_samples(db=db):
+            if material_class and (sample.get("material") or {}).get("class") != material_class:
+                continue
+            for scan in scanner_db.scans_for_sample(sample["_id"], db=db):
+                if scan.get("laser_features"):
+                    feats.extend(feature_rows(sample, scan, schema.LASER_WAVELENGTHS_NM))
+        zf.writestr("metadata.xlsx", _metadata_xlsx_bytes(exported, counts, missing, feats))
 
     summary = {
         "files": len(exported),
@@ -107,12 +118,13 @@ def build_bundle(
     return summary
 
 
-def _metadata_xlsx_bytes(exported, counts, missing) -> bytes:
-    """Build metadata.xlsx in memory: a files sheet plus a summary sheet."""
+def _metadata_xlsx_bytes(exported, counts, missing, feature_rows_=None) -> bytes:
+    """Build metadata.xlsx in memory: files, summary, and laser_features sheets."""
     import io
 
     from openpyxl import Workbook
     from openpyxl.styles import Font
+    from .laser_features import FEATURE_COLUMNS
 
     wb = Workbook()
 
@@ -139,6 +151,15 @@ def _metadata_xlsx_bytes(exported, counts, missing) -> bytes:
         s.append(["missing on disk (registered in DB, file absent)", "", len(missing)])
         for m in missing:
             s.append(["missing", m, ""])
+
+    if feature_rows_:
+        lf = wb.create_sheet("laser_features")
+        lf.append(FEATURE_COLUMNS)
+        for c in lf[1]:
+            c.font = Font(bold=True)
+        for row in feature_rows_:
+            lf.append([row.get(k) for k in FEATURE_COLUMNS])
+        lf.freeze_panes = "A2"
 
     buf = io.BytesIO()
     wb.save(buf)

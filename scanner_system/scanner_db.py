@@ -152,6 +152,17 @@ def start_scan(sample_id, mode="full", operator=None, notes="", angle=None,
     return doc["_id"]
 
 
+def set_laser_features(scan_id, features, db=None) -> None:
+    """Store the computed per-channel laser material features on a scan.
+
+    Features are a derived product of the scan's laser artifacts (see
+    laser_features.py); they live on the scan document so export can join
+    them to the sample's labels without re-reading images.
+    """
+    d = get_db(db)
+    d["scans"].update_one({"_id": scan_id}, {"$set": {"laser_features": features}})
+
+
 def record_instrument(scan_id, instrument, status, detail="", extra=None, db=None) -> None:
     """Record one instrument's outcome on a scan and refresh overall status.
 

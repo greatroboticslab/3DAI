@@ -383,6 +383,27 @@ def run_capture(
             scanner_db.record_instrument(
                 scan_id, "laser", "ok" if any_ok else "failed",
                 detail="" if any_ok else "no laser frames captured", db=d)
+
+            # The material features ARE the laser data as far as a spreadsheet
+            # or a model is concerned: scatter halo, reflectance colour,
+            # speckle, and the infrared equivalents. Computed here, once, from
+            # the clean single-session frames, and stored on the scan.
+            if any_ok:
+                try:
+                    from . import laser_features
+                    feats = laser_features.compute_features(
+                        os.path.join(scan_dir, "laser"), channels=laser_channels)
+                    if feats:
+                        scanner_db.set_laser_features(scan_id, feats, db=d)
+                        scanner_db.record_instrument(scan_id, "laser_features", "ok", db=d)
+                    else:
+                        scanner_db.record_instrument(
+                            scan_id, "laser_features", "failed",
+                            detail="no dark frame to subtract", db=d)
+                except Exception as exc:
+                    scanner_db.record_instrument(
+                        scan_id, "laser_features", "failed",
+                        detail=f"{type(exc).__name__}: {exc}"[:300], db=d)
         except Exception as exc:
             scanner_db.record_instrument(scan_id, "laser", "failed", detail=str(exc), db=d)
         finally:
