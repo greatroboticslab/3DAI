@@ -417,6 +417,8 @@ def write_features(path: str, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
     from .laser_features import FEATURE_COLUMNS
+    rows = [dict(r, sample_id=_short(r.get("sample_id")),
+                 scan_id=_short(r.get("scan_id"))) for r in rows]
     ext = os.path.splitext(path)[1].lower()
     if ext in (".xlsx", ".xlsm"):
         _retry_locked(_append_features_xlsx, path, rows, FEATURE_COLUMNS,
