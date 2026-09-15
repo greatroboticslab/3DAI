@@ -11,6 +11,7 @@ REM   2. run this file; it prints a login link; open it and sign in
 REM   3. in https://login.tailscale.com/admin/dns turn on MagicDNS + HTTPS
 REM
 REM Every later time: just double-click this file and leave the window open.
+REM It also runs by itself at every login (shortcut in the Startup folder).
 cd /d "%~dp0"
 set PY=%~dp0scanner_system\.venv\Scripts\python.exe
 set TS="C:\Program Files\Tailscale\tailscale.exe"
@@ -40,4 +41,7 @@ REM (tailnet-only instead:  tailscale serve --bg 8501)
 echo.
 echo The view is online at the https address printed above.
 echo Leave this window open. Close it (and the GUI window) to go offline.
+REM "auto" = started from the Startup folder after a login: no
+REM window to keep open, so do not wait for a key.
+if "%1"=="auto" exit /b 0
 pause

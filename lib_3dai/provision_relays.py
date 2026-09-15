@@ -8,7 +8,7 @@ assigned at runtime with a serial ``CONFIG`` command. This script holds the pin
 map for THIS rig in one place and pushes it to the board, so the mapping lives
 in version control instead of someone's memory.
 
-SAFETY (see AGENTS.md)
+SAFETY
 ----------------------
 - Importing this module does nothing to hardware. No serial port is opened and
   no command is sent at import time.

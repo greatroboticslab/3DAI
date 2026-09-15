@@ -9,6 +9,7 @@ from fpp_tools.temporal_unwrap import (
     footprint_from_mask,
     estimate_temporal_absolute_phase,
     temporal_delta_phase,
+    reconstruct_height_map,
 )
 
 
@@ -70,7 +71,62 @@ def main():
     coeffs = fit_height_curve([0.0, expected_high_phase_shift], [0.0, 9.0])
     assert np.allclose(coeffs, [0.0, 9.0 / expected_high_phase_shift, 0.0])
 
-    print("OK: temporal unwrap, reference subtraction, and height fit")
+    test_wrapped_robustness()
+    test_reconstruct_height_map()
+    print("OK: temporal unwrap, reference subtraction, height fit, wrapped robustness, reconstruction")
+
+
+def test_wrapped_robustness():
+    """Wrapped delta must stay correct and bounded when the single low-frequency
+    fringe is garbage -- the exact case that exploded the absolute unwrap to
+    ~150 rad on the real rig."""
+    freqs = np.array([1, 6, 24], dtype=float)
+    height, width = 40, 96
+    shift_px = 0.35
+    expected = 2.0 * np.pi * freqs[-1] * shift_px / width
+
+    ref = synthesize_stacks(freqs, np.zeros((height, width), dtype=np.float32))
+    local_shift = np.zeros((height, width), dtype=np.float32)
+    local_shift[12:28, 30:66] = shift_px
+    obj = synthesize_stacks(freqs, local_shift)
+
+    # Swamp ONLY the low-frequency object stack -> wrong fringe order in the
+    # multi-frequency unwrap. Fixed seed keeps it deterministic.
+    rng = np.random.default_rng(0)
+    obj[0] = obj[0] + rng.normal(0.0, 5.0, obj[0].shape).astype(np.float32)
+
+    fp = footprint_from_mask(np.ones((height, width), dtype=bool))
+    wrapped = temporal_delta_phase(ref, obj, freqs, footprint=fp, method="wrapped")
+    absolute = temporal_delta_phase(ref, obj, freqs, footprint=fp, method="absolute")
+
+    # Wrapped: bounded to a fringe period and still correct on the object.
+    assert np.abs(wrapped.delta).max() <= np.pi + 1e-3
+    assert np.isclose(np.median(wrapped.delta[12:28, 30:66]), expected, atol=2e-2)
+    # Absolute: the corrupted low fringe drives whole-order (>= 2*pi) errors.
+    assert np.abs(absolute.delta).max() > 2.0 * np.pi
+
+
+def test_reconstruct_height_map():
+    """reconstruct_height_map maps delta phase through the calibration curve."""
+    freqs = np.array([1, 6, 24], dtype=float)
+    height, width = 40, 96
+    shift_px = 0.35
+    expected = 2.0 * np.pi * freqs[-1] * shift_px / width
+
+    ref = synthesize_stacks(freqs, np.zeros((height, width), dtype=np.float32))
+    local_shift = np.zeros((height, width), dtype=np.float32)
+    local_shift[12:28, 30:66] = shift_px
+    obj = synthesize_stacks(freqs, local_shift)
+    fp = footprint_from_mask(np.ones((height, width), dtype=bool))
+
+    coeffs = [0.0, 9.0 / expected, 0.0]     # 9mm at the object's delta phase
+    height_mm, result = reconstruct_height_map(ref, obj, freqs, coeffs, footprint=fp)
+
+    assert np.isclose(np.median(height_mm[12:28, 30:66]), 9.0, atol=0.1)
+    panel = height_mm.copy()
+    panel[12:28, 30:66] = np.nan
+    assert abs(np.nanmedian(panel)) < 0.1
+    assert result.reliable.mean() > 0.99
 
 
 if __name__ == "__main__":
