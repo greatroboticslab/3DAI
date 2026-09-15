@@ -30,15 +30,12 @@ live view.
 
 ### Who can open it
 
-- **Tailnet members** (default, `tailscale serve`): Dr. Zhang installs the
-  Tailscale app on his laptop or phone and signs in with the same login, or
-  is invited from https://login.tailscale.com/admin/users. Then the address
-  works for him anywhere.
-- **Anyone with the link** (for NSF reviewers): in
-  https://login.tailscale.com/admin/acls add the Funnel policy (the admin
-  page offers a one-click "enable Funnel" snippet), then in `go_online.bat`
-  change `serve --bg 8501` to `funnel --bg 8501`. The same address becomes
-  public over HTTPS. It is still read-only.
+- **Anyone with the link** (default, `tailscale funnel`): Dr. Zhang and
+  reviewers need nothing installed; the https address just opens. Funnel
+  was enabled for this network on 2026-09-15. The view is read-only.
+- **Tailnet only**: change `funnel --bg 8501` to `serve --bg 8501` in
+  `go_online.bat`; then only devices signed into our Tailscale account can
+  open it.
 
 ### Turning it off
 

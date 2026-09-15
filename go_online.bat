@@ -34,9 +34,9 @@ echo Starting the read-only GUI...
 set SCANNER_GUI_READONLY=1
 start "3DAI GUI (read-only)" /min "%PY%" -m streamlit run scanner_system\gui.py --server.port 8501 --server.address 127.0.0.1 --server.headless true
 
-REM Share it. "serve" = people on our Tailscale network. To make it public
-REM instead (anyone with the link), use:  tailscale funnel --bg 8501
-%TS% serve --bg 8501
+REM Share it publicly: anyone with the link can open the read-only view.
+REM (tailnet-only instead:  tailscale serve --bg 8501)
+%TS% funnel --bg 8501
 echo.
 echo The view is online at the https address printed above.
 echo Leave this window open. Close it (and the GUI window) to go offline.
