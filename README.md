@@ -1,3 +1,11 @@
+# 3DAI scanner
+
+**Collecting data?** Read [HOW_TO_SCAN.md](HOW_TO_SCAN.md). Double-click `scan.bat` to scan, `push_data.bat` to publish.
+
+**Looking for the data?** It is in [dataset/](dataset/) (images by material, `metadata.xlsx`, `laser_features.csv`), re-exported after every session.
+
+---
+
 # Requirments
 Docker
 

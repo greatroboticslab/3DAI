@@ -336,3 +336,38 @@ def test_validate_row_surface_and_transparency():
 def test_blank_channels_means_all_four():
     # A collector who leaves laser_channels empty must get the green laser too.
     assert manifest.validate_row({"label": "x"}, 2)["laser_channels"] == [1, 2, 3, 4]
+
+
+def test_append_entry_fills_first_empty_row():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "m.xlsx")
+        manifest.write_template(path, rows=10)
+        e1 = {"label": "oak block 01", "material_class": "wood", "surface": "matte",
+              "transparency": "opaque", "known_height_mm": "12.5"}
+        e2 = {"label": "tin can 01", "material_class": "metal", "surface": "glossy",
+              "transparency": "opaque", "notes": "shiny"}
+        assert manifest.append_entry(path, e1) == 2
+        assert manifest.append_entry(path, e2) == 3
+        rows = manifest.read_manifest(path)
+        assert [r["label"] for r in rows] == ["oak block 01", "tin can 01"]
+        parsed = manifest.validate_row(rows[1], rows[1]["row_number"])
+        assert parsed["material_class"] == "metal" and parsed["angles"] == manifest.DEFAULT_ANGLES
+        assert manifest.validate_row(rows[0], 2)["known_height_mm"] == 12.5
+
+
+def test_ask_new_object_defaults_and_finish(monkeypatch):
+    answers = iter(["wooden block 03", "wood", "oak", "", "", "", ""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    e = manifest.ask_new_object()
+    assert e["label"] == "wooden block 03" and e["material_class"] == "wood"
+    assert e["surface"] == "matte" and e["transparency"] == "opaque"
+    assert manifest.validate_row(dict(e, row_number=5), 5)["laser_channels"] == [1, 2, 3, 4]
+
+    answers = iter(["steel ruler 02", "metal", "", "2", "3", "abc", "1.5", "x"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    e = manifest.ask_new_object()
+    assert e["surface"] == "glossy" and e["transparency"] == "transparent"
+    assert e["known_height_mm"] == "1.5" and e["notes"] == "x"
+
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")
+    assert manifest.ask_new_object() is None

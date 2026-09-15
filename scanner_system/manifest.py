@@ -546,11 +546,174 @@ def _aggregate(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _choose(name: str, options, default: str) -> str:
+    """Numbered pick from a fixed list; Enter takes the default."""
+    menu = "  ".join(f"{i} {o}" for i, o in enumerate(options, start=1))
+    while True:
+        raw = input(f"{name}:  {menu}   [{default}]: ").strip().lower()
+        if not raw:
+            return default
+        if raw.isdigit() and 1 <= int(raw) <= len(options):
+            return options[int(raw) - 1]
+        if raw in options:
+            return raw
+        print(f"    type a number 1-{len(options)} or one of: {', '.join(options)}")
+
+
+MATERIAL_HINT = ("wood / metal / plastic / cardboard / paper / fabric / glass / "
+                 "ceramic / foam / rubber / stone / leather / other")
+
+
+def ask_new_object() -> Optional[dict[str, str]]:
+    """Ask the collector for one object's row. Empty name means finished.
+
+    Returns the entry as raw strings, the same shape read_manifest yields,
+    so validate_row applies exactly the rules a typed-in sheet gets.
+    """
+    print("\n=== New object (leave the name empty when you are finished) ===")
+    label = input("Object name (e.g. 'wooden block 03'): ").strip()
+    if not label:
+        return None
+    material = ""
+    while not material:
+        material = input(f"Material ({MATERIAL_HINT}): ").strip().lower()
+    subclass = input("More detail, optional (e.g. oak, aluminum, abs): ").strip()
+    surface = _choose("Surface", SURFACE_FINISHES, "matte")
+    transparency = _choose("Transparency", TRANSPARENCIES, "opaque")
+    while True:
+        height = input("Height in mm (only if measured with calipers, else Enter): ").strip()
+        if not height:
+            break
+        try:
+            float(height)
+            break
+        except ValueError:
+            print("    a number like 12.5, or just Enter")
+    notes = input("Notes, optional: ").strip()
+    return {"label": label, "material_class": material, "material_subclass": subclass,
+            "surface": surface, "transparency": transparency, "angles": "",
+            "known_height_mm": height, "notes": notes, "sample_id": "", "mode": "",
+            "laser_channels": "", "operator": ""}
+
+
+def append_entry(path: str, entry: dict[str, Any]) -> int:
+    """Write a new entry into the first empty row of the sheet; returns its row number.
+
+    Uses the first row with an empty label rather than the row after the last
+    one so the new row lands inside the template's pre-validated block
+    (dropdowns), and so a sheet with blank rows in the middle fills up in order.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".xlsx", ".xlsm"):
+        holder: dict[str, int] = {}
+
+        def _write(p):
+            from openpyxl import load_workbook
+            wb = load_workbook(p)
+            ws = wb.active
+            headers = [_clean(c.value).lower() for c in ws[1]]
+            label_col = headers.index("label") + 1
+            r = 2
+            while _clean(ws.cell(row=r, column=label_col).value):
+                r += 1
+            for key, value in entry.items():
+                if key in headers and value not in ("", None):
+                    ws.cell(row=r, column=headers.index(key) + 1, value=value)
+            wb.save(p)
+            holder["row"] = r
+
+        _retry_locked(_write, path, what="new row")
+        return holder["row"]
+
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        reader = list(csv.reader(fh))
+    headers = [_clean(h).lower() for h in reader[0]] if reader else list(ALL_COLUMNS)
+    with open(path, "a", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        if not reader:
+            w.writerow(headers)
+        w.writerow([entry.get(h, "") for h in headers])
+    return len(reader) + 1
+
+
+def _scan_row(path: str, row: dict[str, Any], prompt: bool, db=None) -> dict[str, Any]:
+    """Scan one validated row (all its poses) and write the result back.
+
+    Returns the aggregated summary that was written to the sheet.
+    """
+    from . import capture, scanner_db
+
+    label = row["label"]
+    sample_id = row["sample_id"]
+    if sample_id:
+        try:
+            sample_id = scanner_db.resolve_sample_id(sample_id, db=db)
+        except KeyError as exc:
+            raise ManifestError(f"row {row['row_number']}: {exc}") from None
+    if not sample_id:
+        # run_capture does NOT create the sample and does not check that it
+        # exists, so an unknown id would silently produce an orphan scan.
+        sample_id = scanner_db.create_sample(
+            label=label,
+            material_class=row["material_class"],
+            material_subclass=row["material_subclass"],
+            context={"source": "manifest",
+                     "manifest_path": os.path.basename(path),
+                     # Surface-property ground truth rides the sample so
+                     # export can pair it with the laser scatter features.
+                     "surface": row["surface"],
+                     "transparency": row["transparency"]},
+            db=db,
+        )
+        print(f"    created sample {sample_id}")
+
+    # One scan per pose. Dr. Zhang's collection design is "shining lasers
+    # on it from different angles": the object is physically rotated
+    # between poses, each pose is its own scan document tagged
+    # angle={index, count}, and all of them share the sample_id.
+    n_angles = row["angles"]
+    summaries = []
+    for k in range(1, n_angles + 1):
+        if prompt and k > 1:
+            input(f">>> Rotate {label!r} to pose {k}/{n_angles}, "
+                  "then press Enter: ")
+        if n_angles > 1:
+            print(f"    pose {k}/{n_angles}...")
+        pkg = capture.run_capture(
+            sample_id=sample_id,
+            mode=row["mode"],
+            laser_channels=row["laser_channels"],
+            operator=row["operator"],
+            angle={"index": k, "count": n_angles} if n_angles > 1 else None,
+            notes=row["notes"],
+            # The caliper height describes the object as placed for pose 1;
+            # a rotated object has a different height, so later poses are
+            # dataset-only, never anchors.
+            known_height_mm=row["known_height_mm"] if k == 1 else None,
+            db=db,
+        )
+        summaries.append(_summarize(pkg))
+
+        # The measured laser features land on their own tab right away,
+        # so the collector can watch materials separate as objects go by.
+        if pkg.get("laser_features"):
+            from . import laser_features
+            sample_doc = scanner_db.get_sample(sample_id, db=db) or {"_id": sample_id}
+            write_features(path, laser_features.feature_rows(
+                sample_doc, pkg, schema.LASER_WAVELENGTHS_NM))
+
+    summary = _aggregate(summaries)
+    summary["sample_id"] = _short(sample_id)
+    write_results(path, row["row_number"], summary)
+    return summary
+
+
 def run_manifest(
     path: str,
     limit: Optional[int] = None,
     rescan: bool = False,
     prompt: bool = False,
+    add: bool = False,
     db=None,
 ) -> dict[str, Any]:
     """Scan every pending row of a manifest, writing results back as we go.
@@ -559,16 +722,15 @@ def run_manifest(
     ----------
     limit   : stop after this many scans (useful for a cautious first run)
     rescan  : also re-scan rows already marked complete
+    add     : after the pending rows, ask for new objects at the keyboard,
+              append each to the sheet and scan it (walk-up collection, no
+              spreadsheet editing needed)
     db      : injected database handle, for testing
 
     Returns a summary dict. Never raises on a single row's hardware failure:
     run_capture records failures as statuses rather than exceptions, so one bad
     sample does not abandon the rest of the batch.
     """
-    # Imported here, not at module scope: importing capture pulls in the
-    # hardware path, and reading or validating a manifest must stay inert.
-    from . import capture, scanner_db
-
     raw_rows = read_manifest(path)
     rows = [validate_row(r, r["row_number"]) for r in raw_rows]
 
@@ -581,7 +743,19 @@ def run_manifest(
     print(f"manifest: {len(rows)} rows, {len(pending)} to scan"
           + (f", {skipped} already complete" if skipped else ""))
 
-    done, failed, skipped_live = 0, 0, 0
+    done, failed, skipped_live, added = 0, 0, 0, 0
+
+    def _tally(summary: dict[str, Any]) -> None:
+        nonlocal done, failed
+        status = summary["status"]
+        print(f"    {status} ({summary['artifact_count']} artifacts)")
+        if summary["failure_detail"]:
+            print(f"    ! {summary['failure_detail']}")
+        if status == "complete":
+            done += 1
+        else:
+            failed += 1
+
     for i, row in enumerate(pending, start=1):
         label = row["label"]
         print(f"\n[{i}/{len(pending)}] row {row['row_number']}: {label}")
@@ -598,81 +772,29 @@ def run_manifest(
                 skipped_live += 1
                 continue
 
-        sample_id = row["sample_id"]
-        if sample_id:
-            try:
-                sample_id = scanner_db.resolve_sample_id(sample_id, db=db)
-            except KeyError as exc:
-                raise ManifestError(f"row {row['row_number']}: {exc}") from None
-        if not sample_id:
-            # run_capture does NOT create the sample and does not check that it
-            # exists, so an unknown id would silently produce an orphan scan.
-            sample_id = scanner_db.create_sample(
-                label=label,
-                material_class=row["material_class"],
-                material_subclass=row["material_subclass"],
-                context={"source": "manifest",
-                         "manifest_path": os.path.basename(path),
-                         # Surface-property ground truth rides the sample so
-                         # export can pair it with the laser scatter features.
-                         "surface": row["surface"],
-                         "transparency": row["transparency"]},
-                db=db,
-            )
-            print(f"    created sample {sample_id}")
+        _tally(_scan_row(path, row, prompt=prompt, db=db))
 
-        # One scan per pose. Dr. Zhang's collection design is "shining lasers
-        # on it from different angles": the object is physically rotated
-        # between poses, each pose is its own scan document tagged
-        # angle={index, count}, and all of them share the sample_id.
-        n_angles = row["angles"]
-        summaries = []
-        for k in range(1, n_angles + 1):
-            if prompt and k > 1:
-                input(f">>> Rotate {label!r} to pose {k}/{n_angles}, "
-                      "then press Enter: ")
-            if n_angles > 1:
-                print(f"    pose {k}/{n_angles}...")
-            pkg = capture.run_capture(
-                sample_id=sample_id,
-                mode=row["mode"],
-                laser_channels=row["laser_channels"],
-                operator=row["operator"],
-                angle={"index": k, "count": n_angles} if n_angles > 1 else None,
-                notes=row["notes"],
-                # The caliper height describes the object as placed for pose 1;
-                # a rotated object has a different height, so later poses are
-                # dataset-only, never anchors.
-                known_height_mm=row["known_height_mm"] if k == 1 else None,
-                db=db,
-            )
-            summaries.append(_summarize(pkg))
-
-            # The measured laser features land on their own tab right away,
-            # so the collector can watch materials separate as objects go by.
-            if pkg.get("laser_features"):
-                from . import laser_features
-                sample_doc = scanner_db.get_sample(sample_id, db=db) or {"_id": sample_id}
-                write_features(path, laser_features.feature_rows(
-                    sample_doc, pkg, schema.LASER_WAVELENGTHS_NM))
-
-        summary = _aggregate(summaries)
-        summary["sample_id"] = _short(sample_id)
-        write_results(path, row["row_number"], summary)
-
-        status = summary["status"]
-        print(f"    {status} ({summary['artifact_count']} artifacts)")
-        if summary["failure_detail"]:
-            print(f"    ! {summary['failure_detail']}")
-        if status == "complete":
-            done += 1
-        else:
-            failed += 1
+    if add:
+        # Walk-up collection: the person at the bench types the object in,
+        # the row lands in the sheet, the scan runs. Nobody has to open the
+        # spreadsheet, which is what made the sheet-first flow stall.
+        while True:
+            entry = ask_new_object()
+            if entry is None:
+                break
+            row_number = append_entry(path, entry)
+            row = validate_row(dict(entry, row_number=row_number), row_number)
+            print(f"\n[new] row {row_number}: {row['label']}")
+            input(f">>> Place {row['label']!r} on the stage, then press Enter: ")
+            _tally(_scan_row(path, row, prompt=True, db=db))
+            added += 1
 
     print(f"\ndone: {done} complete, {failed} partial/failed, "
-          f"{skipped + skipped_live} skipped")
-    return {"total": len(rows), "scanned": len(pending) - skipped_live,
-            "complete": done, "problem": failed, "skipped": skipped + skipped_live}
+          f"{skipped + skipped_live} skipped"
+          + (f", {added} added at the bench" if added else ""))
+    return {"total": len(rows) + added, "scanned": len(pending) - skipped_live + added,
+            "complete": done, "problem": failed, "skipped": skipped + skipped_live,
+            "added": added}
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────
@@ -685,7 +807,7 @@ def main(argv=None) -> int:
     p_t = sub.add_parser("template", help="write a blank manifest")
     p_t.add_argument("path")
     p_t.add_argument("--rows", type=int, default=250,
-                     help="how many rows get the mode dropdown (default 25)")
+                     help="how many rows get the dropdowns (default 250)")
 
     p_v = sub.add_parser("validate", help="check a manifest without scanning")
     p_v.add_argument("path")
@@ -697,6 +819,9 @@ def main(argv=None) -> int:
                      help="also re-scan rows already marked complete")
     p_r.add_argument("--prompt", action="store_true",
                      help="pause before each row so the collector can place the object")
+    p_r.add_argument("--add", action="store_true",
+                     help="after the sheet's rows, ask for new objects at the keyboard "
+                          "and scan them (implies --prompt for those rows)")
 
     args = ap.parse_args(argv)
 
@@ -720,7 +845,7 @@ def main(argv=None) -> int:
 
         if args.cmd == "run":
             run_manifest(args.path, limit=args.limit, rescan=args.rescan,
-                         prompt=args.prompt)
+                         prompt=args.prompt, add=args.add)
             return 0
     except ManifestError as exc:
         print(f"ERR {exc}")
