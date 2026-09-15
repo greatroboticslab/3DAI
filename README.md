@@ -2,6 +2,8 @@
 
 **Collecting data?** Read [HOW_TO_SCAN.md](HOW_TO_SCAN.md). Double-click `scan.bat` to scan, `push_data.bat` to publish.
 
+**Want the live view online?** [ONLINE.md](ONLINE.md): `go_online.bat` publishes the read-only GUI through Tailscale.
+
 **Looking for the data?** It is in [dataset/](dataset/) (images by material, `metadata.xlsx`, `laser_features.csv`), re-exported after every session.
 
 ---

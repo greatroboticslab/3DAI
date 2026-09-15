@@ -65,7 +65,14 @@ def _artifact_abs_path(file_path: str) -> str:
 
 st.sidebar.title("🔬 Scanner")
 st.sidebar.caption("Material recognition dataset")
-page = st.sidebar.radio("View", ["Capture", "Samples", "Dataset export", "Hardware"])
+# SCANNER_GUI_READONLY=1 is how the GUI is shared over Tailscale: the Capture
+# and Hardware pages fire lasers and must never be reachable from outside.
+READONLY = os.getenv("SCANNER_GUI_READONLY", "").strip() in ("1", "true", "yes")
+if READONLY:
+    st.sidebar.caption("read-only view")
+    page = st.sidebar.radio("View", ["Samples", "Dataset export"])
+else:
+    page = st.sidebar.radio("View", ["Capture", "Samples", "Dataset export", "Hardware"])
 
 
 # ── Page: Samples ───────────────────────────────────────────────────────────

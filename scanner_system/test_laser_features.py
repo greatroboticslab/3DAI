@@ -128,3 +128,37 @@ def test_flood_background_reported_only_for_flood_channels():
         chs = lf.compute_features(tmp)["channels"]
         assert chs["4"]["flood"] is True and abs(chs["4"]["flood_background"] - 40.0) < 2.0
         assert chs["1"]["flood_background"] is None
+
+
+def test_gain_normalization_makes_scans_comparable():
+    """The same surface captured at gain 8 and gain 4 must give the same core
+    and add_* once frames are scaled to GAIN_REF; saturation stays raw."""
+    import json
+
+    def scan_at(tmp, gain):
+        # a frame at gain g is the reference frame times g/GAIN_REF
+        k = gain / lf.GAIN_REF
+        h, w = 200, 300
+        dark_ref = np.full((h, w, 3), 30, np.float32)
+        add_ref = _gaussian_spot(h, w, 100, 150, 8.0, 100.0).astype(np.float32)[..., None]
+        _write_png(os.path.join(tmp, "dark.png"), np.clip(dark_ref * k, 0, 255).astype(np.uint8))
+        _write_png(os.path.join(tmp, "las1.png"),
+                   np.clip((dark_ref + add_ref) * k, 0, 255).astype(np.uint8))
+        state = {"exposure_100ns": lf.EXPOSURE_REF_100NS, "gain": gain}
+        with open(os.path.join(tmp, "exposure.json"), "w") as fh:
+            json.dump({"dark": state, "ch1": state}, fh)
+        return lf.compute_features(tmp, channels=(1,))["channels"]["1"]
+
+    with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+        lo, hi = scan_at(a, 4.0), scan_at(b, 2.0)     # gain 2 = frames half as bright
+        assert abs(lo["core"] - hi["core"]) < 3.0
+        assert abs(lo["add_g"] - hi["add_g"]) < 3.0
+        assert lo["gain_factor"] == 1.0 and hi["gain_factor"] == 2.0
+        assert hi["saturated_core"] == 0.0
+
+    # a scan whose exposure.json has no gain (older marker) is left unscaled
+    with tempfile.TemporaryDirectory() as tmp:
+        _make_scan(tmp)
+        f = lf.compute_features(tmp)
+        assert f["normalization"]["applied"] is False
+        assert f["channels"]["1"]["gain_factor"] == 1.0

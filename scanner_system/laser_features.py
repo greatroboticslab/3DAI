@@ -139,8 +139,34 @@ def _speckle(mag: np.ndarray, cy: float, cx: float) -> float:
     return float(patch.std() / m) if m > 2.0 else 0.0
 
 
-def _color_channel(lit_path: str, dark: np.ndarray) -> dict[str, Any]:
-    lit = _load_rgb(lit_path)
+# Radiometric reference. The Kinect v2 colour camera has no manual exposure:
+# in the dark lab it pins exposure at its maximum (66 ms) and varies GAIN per
+# scene, 3.8 to 7.5 across the 2026-09-15 objects and sometimes between the
+# dark and lit frames of one scan. Every frame is scaled to this reference
+# gain and exposure before dark subtraction, so "core" and "add_*" are in
+# the same units for every object. The reference is the typical mid-session
+# value, so today's numbers keep their familiar magnitude.
+GAIN_REF = 4.0
+EXPOSURE_REF_100NS = 664719
+
+
+def _norm_factor(state: Optional[dict[str, Any]]) -> float:
+    """Multiplier that brings a frame captured at ``state`` to the reference."""
+    if not state:
+        return 1.0
+    gain = float(state.get("gain") or 0.0)
+    exposure = float(state.get("exposure_100ns") or 0.0)
+    f = 1.0
+    if gain > 0:
+        f *= GAIN_REF / gain
+    if exposure > 0:
+        f *= EXPOSURE_REF_100NS / exposure
+    return f
+
+
+def _color_channel(lit_path: str, dark: np.ndarray, lit_factor: float = 1.0) -> dict[str, Any]:
+    raw = _load_rgb(lit_path)
+    lit = raw * lit_factor
     diff = lit - dark
     mag = diff.mean(axis=2)
     cy, cx = _spot_center(mag)
@@ -153,7 +179,8 @@ def _color_channel(lit_path: str, dark: np.ndarray) -> dict[str, Any]:
     # Reflectance colour read at the same core disc as core/halo, so every
     # number in a row describes the same patch of surface.
     add = [float(diff[:, :, i][core_mask].mean()) for i in range(3)] if core_mask.any() else [0.0] * 3
-    sat = float((lit.max(axis=2)[core_mask] >= 250).mean()) if core_mask.any() else 0.0
+    # Saturation is a property of the sensor, so it is read on the raw frame.
+    sat = float((raw.max(axis=2)[core_mask] >= 250).mean()) if core_mask.any() else 0.0
 
     flood = lit_frac > FLOOD_FRACTION
     # The stage is a flat white matte table, present in every scan. For a
@@ -176,6 +203,7 @@ def _color_channel(lit_path: str, dark: np.ndarray) -> dict[str, Any]:
         "lit_fraction": round(lit_frac, 4),
         "flood": bool(flood),
         "saturated_core": round(sat, 2),
+        "gain_factor": round(lit_factor, 4),
     }
 
 
@@ -208,18 +236,28 @@ def compute_features(laser_dir: str, channels=(1, 2, 3, 4)) -> Optional[dict[str
     # writes exposure.json, and only there do dark and lit frames share an
     # exposure state. Older scans grabbed each frame in a separate process and
     # carry a -12..-15 background offset that would masquerade as signal.
-    if not os.path.isfile(os.path.join(laser_dir, "exposure.json")):
+    exp_path = os.path.join(laser_dir, "exposure.json")
+    if not os.path.isfile(exp_path):
         return None
-    dark = _load_rgb(dark_path)
+    try:
+        with open(exp_path) as fh:
+            exposure = json.load(fh)
+    except Exception:
+        exposure = {}
+    dark = _load_rgb(dark_path) * _norm_factor(exposure.get("dark"))
     dark_ir_path = os.path.join(laser_dir, "dark_ir.png")
     dark_ir = _load_ir(dark_ir_path) if os.path.isfile(dark_ir_path) else None
 
-    out: dict[str, Any] = {"channels": {}}
+    out: dict[str, Any] = {
+        "channels": {},
+        "normalization": {"gain_ref": GAIN_REF, "exposure_ref_100ns": EXPOSURE_REF_100NS,
+                          "applied": bool(exposure)},
+    }
     for ch in channels:
         lit = os.path.join(laser_dir, f"las{ch}.png")
         if not os.path.isfile(lit):
             continue
-        feats = _color_channel(lit, dark)
+        feats = _color_channel(lit, dark, _norm_factor(exposure.get(f"ch{ch}")))
         lit_ir = os.path.join(laser_dir, f"las{ch}_ir.png")
         if dark_ir is not None and os.path.isfile(lit_ir):
             feats.update(_ir_channel(lit_ir, dark_ir))
@@ -230,13 +268,7 @@ def compute_features(laser_dir: str, channels=(1, 2, 3, 4)) -> Optional[dict[str
     out["red_green_ratio"] = round(chs["1"]["core"] / g, 3) if "1" in chs and g > 0 else None
     out["red2_green_ratio"] = round(chs["2"]["core"] / g, 3) if "2" in chs and g > 0 else None
 
-    exp_path = os.path.join(laser_dir, "exposure.json")
-    if os.path.isfile(exp_path):
-        try:
-            with open(exp_path) as fh:
-                out["exposure"] = json.load(fh)
-        except Exception:
-            pass
+    out["exposure"] = exposure
     return out
 
 
@@ -250,6 +282,8 @@ FEATURE_COLUMNS = [
     "valid",
     "core", "halo_r50", "halo_r10", "halo_energy_10_40", "speckle",
     "add_r", "add_g", "add_b", "flood", "flood_background", "saturated_core",
+    # multiplier that brought this frame to GAIN_REF; 1.0 = captured at reference
+    "gain_factor",
     "ir_core", "ir_halo_r50", "ir_halo_r10", "ir_halo_energy_10_40", "ir_speckle",
     "ir_saturated_core",
     "red_green_ratio", "red2_green_ratio",
