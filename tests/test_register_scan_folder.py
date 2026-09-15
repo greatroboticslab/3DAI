@@ -49,7 +49,7 @@ def main():
 
         roles = {(a["category"], a["role"], a["file_path"]) for a in artifacts}
         assert ("fringe", "fringe_stack_npz", "scan_test/calib/breadboard/scan.npz") in roles
-        assert ("fringe", "white_frame", "scan_test/calib/breadboard/white.png") in roles
+        assert ("fringe", "fringe_white_png", "scan_test/calib/breadboard/white.png") in roles
         assert ("fusion", "height_map_png", "scan_test/calib/breadboard/height_mm.png") in roles
         assert ("fusion", "contrast_png", "scan_test/calib/breadboard/contrast.png") in roles
         assert ("calibration", "calibration_coefficients_txt", "scan_test/calib/breadboard/calibration_temporal.txt") in roles
