@@ -321,3 +321,44 @@ def test_export_dataset_carries_surface_ground_truth():
     scanner_db.register_artifact(scan, sid, "laser", "laser_ch1_png", "m.png", db=db)
     row = scanner_db.export_dataset(db=db)[0]
     assert row["surface"] == "glossy" and row["transparency"] == "opaque"
+
+
+def test_resolve_sample_id_prefix():
+    db = FakeDB()
+    a = scanner_db.create_sample("a", db=db)
+    b = scanner_db.create_sample("b", db=db)
+    assert scanner_db.resolve_sample_id(a, db=db) == a               # full id
+    assert scanner_db.resolve_sample_id(a[:8], db=db) == a           # sheet-style short id
+    for bad in ("", "zzzzzzzz"):
+        try:
+            scanner_db.resolve_sample_id(bad, db=db)
+        except KeyError:
+            pass
+        else:
+            raise AssertionError(f"{bad!r} should not resolve")
+    # an ambiguous prefix must refuse rather than guess
+    common = os.path.commonprefix([a, b])
+    if common:
+        try:
+            scanner_db.resolve_sample_id(common, db=db)
+        except KeyError as exc:
+            assert "ambiguous" in str(exc)
+        else:
+            raise AssertionError("ambiguous prefix resolved")
+
+
+def test_result_recorded_after_finish_keeps_complete():
+    db = FakeDB()
+    sid = scanner_db.create_sample("s", db=db)
+    scan_id = scanner_db.start_scan(sid, db=db)
+    for inst in ("laser", "kinect", "projector"):
+        scanner_db.record_instrument(scan_id, inst, "ok", db=db)
+    assert scanner_db.get_scan(scan_id, db=db)["status"] == "running"   # held until finish
+    assert scanner_db.finish_scan(scan_id, db=db) == "complete"
+    # a derived step recomputed offline after the fact (this happened to the
+    # 2026-09-05 verification scan) must not demote a finished scan
+    scanner_db.record_instrument(scan_id, "reconstruction", "ok", db=db)
+    assert scanner_db.get_scan(scan_id, db=db)["status"] == "complete"
+    # but a real capture failure recorded late still shows
+    scanner_db.record_instrument(scan_id, "laser", "failed", detail="x", db=db)
+    assert scanner_db.get_scan(scan_id, db=db)["status"] == "partial"

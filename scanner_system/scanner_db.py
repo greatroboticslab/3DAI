@@ -132,6 +132,27 @@ def get_sample(sample_id: str, db=None) -> Optional[dict[str, Any]]:
     return get_db(db)["samples"].find_one({"_id": sample_id})
 
 
+def resolve_sample_id(text: str, db=None) -> str:
+    """Full sample id from either a full id or a unique short prefix.
+
+    The spreadsheet shows 8-character prefixes so ids fit in a cell; the
+    database keeps full UUIDs because 4DAI shares them. A prefix must match
+    exactly one sample; ambiguity or no match raises KeyError.
+    """
+    text = (text or "").strip()
+    if not text:
+        raise KeyError("empty sample id")
+    d = get_db(db)
+    if d["samples"].find_one({"_id": text}) is not None:
+        return text
+    matches = [s["_id"] for s in list_samples(db=d) if s["_id"].startswith(text)]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise KeyError(f"no sample matches id {text!r}")
+    raise KeyError(f"sample id prefix {text!r} is ambiguous ({len(matches)} matches)")
+
+
 def list_samples(db=None, limit: Optional[int] = None) -> list[dict[str, Any]]:
     """Newest samples first (by created_at). All of them unless ``limit``.
 
@@ -196,8 +217,10 @@ def record_instrument(scan_id, instrument, status, detail="", extra=None, db=Non
         # Don't report "complete" mid-scan: more stages may still run. A caller
         # polling for completion should only see "complete" once finish_scan is
         # called. Surface "partial"/"failed" immediately, but hold "complete" as
-        # "running" until the scan is actually finished.
-        if overall == "complete":
+        # "running" until the scan is actually finished. Once finish_scan has
+        # stamped completed_at, a later result (a derived step recomputed
+        # offline) must not demote the scan to "running" for good.
+        if overall == "complete" and not scan.get("completed_at"):
             overall = "running"
         d["scans"].update_one({"_id": scan_id}, {"$set": {"status": overall}})
 

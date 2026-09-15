@@ -73,7 +73,8 @@ ENTRY_COLUMNS = [
                          # Fill only for flat-topped objects: it becomes a
                          # calibration anchor. Blank = not an anchor.
     "notes",             # freeform, lands on the scan document
-    "sample_id",         # blank = mint a new one. Fill it to reuse/pin an id.
+    "sample_id",         # blank = mint a new one. The 8-char short id the runner
+                         # writes back (or a full id) reuses that sample.
     "mode",              # one of schema.CAPTURE_MODES. Blank = "full".
     "laser_channels",    # e.g. "1,2,4". Blank = ALL FOUR.
     "operator",          # who ran it. Bookkeeping only; blank is fine.
@@ -112,6 +113,17 @@ DONE_STATUSES = {"complete"}
 # point of a surface; a second pose samples another. Operator decision
 # 2026-09-05 for the 200-object collection.
 DEFAULT_ANGLES = 2
+
+# Ids shown in the sheet are the first 8 characters of the UUID (about the
+# width of a normal cell); the database keeps the full id and the runner
+# resolves a short id back to it. 8 hex chars = 4 billion combinations, so a
+# collision inside one lab's samples is not a realistic concern, and the
+# resolver refuses to guess if one ever happens.
+SHORT_ID_LEN = 8
+
+
+def _short(identifier) -> str:
+    return (identifier or "")[:SHORT_ID_LEN]
 
 
 class ManifestError(Exception):
@@ -295,8 +307,8 @@ def _check_headers(headers: list[str]) -> None:
 
 # ── Template generation ────────────────────────────────────────────────────
 
-def write_template(path: str, rows: int = 25) -> str:
-    """Write a blank manifest with headers, dropdowns and an example row.
+def write_template(path: str, rows: int = 250) -> str:
+    """Write a blank manifest with headers and dropdowns for ``rows`` rows.
 
     The in-cell dropdown on ``mode`` is the main reason to prefer .xlsx over
     .csv here: free-text material fields in the GUI are exactly how "Oak",
@@ -325,7 +337,8 @@ def write_template(path: str, rows: int = 25) -> str:
         cell = ws.cell(row=1, column=col)
         cell.font = Font(bold=True)
         cell.fill = entry_fill if name in ENTRY_COLUMNS else result_fill
-        ws.column_dimensions[get_column_letter(col)].width = max(14, len(name) + 3)
+        ws.column_dimensions[get_column_letter(col)].width = (
+            12 if name in ("sample_id", "scan_id") else max(14, len(name) + 3))
     ws.freeze_panes = "A2"
 
     # Dropdowns on every controlled-vocabulary column, so a typo cannot reach
@@ -341,13 +354,6 @@ def write_template(path: str, rows: int = 25) -> str:
         dv.error = err
         ws.add_data_validation(dv)
         dv.add(f"{col}2:{col}{rows + 1}")
-
-    # One example row, clearly marked so nobody scans it by accident. Column
-    # order matches ENTRY_COLUMNS: label, class, subclass, surface,
-    # transparency, angles, known_height_mm, notes, then the blank-ok block.
-    ws.append(["EXAMPLE - delete this row", "wood", "oak", "matte", "opaque",
-               "3", "12.5", "flat matte block, calipered", "", "", "", ""])
-    ws.cell(row=2, column=1).font = Font(italic=True, color="999999")
 
     wb.save(path)
     return path
@@ -493,7 +499,7 @@ def _summarize(pkg: dict[str, Any]) -> dict[str, Any]:
         if r.get("status") == "failed" and r.get("detail")
     ]
     return {
-        "scan_id": pkg.get("_id", ""),
+        "scan_id": _short(pkg.get("_id", "")),
         "status": pkg.get("status", ""),
         "kinect_status": (results.get("kinect") or {}).get("status", ""),
         "projector_status": (results.get("projector") or {}).get("status", ""),
@@ -526,7 +532,7 @@ def _aggregate(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         for i, s in enumerate(summaries, start=1) if s["failure_detail"]
     )
     return {
-        "scan_id": "; ".join(s["scan_id"] for s in summaries),
+        "scan_id": "; ".join(_short(s["scan_id"]) for s in summaries),
         "status": status,
         "kinect_status": summaries[-1]["kinect_status"],
         "projector_status": summaries[-1]["projector_status"],
@@ -591,6 +597,11 @@ def run_manifest(
                 continue
 
         sample_id = row["sample_id"]
+        if sample_id:
+            try:
+                sample_id = scanner_db.resolve_sample_id(sample_id, db=db)
+            except KeyError as exc:
+                raise ManifestError(f"row {row['row_number']}: {exc}") from None
         if not sample_id:
             # run_capture does NOT create the sample and does not check that it
             # exists, so an unknown id would silently produce an orphan scan.
@@ -644,7 +655,7 @@ def run_manifest(
                     sample_doc, pkg, schema.LASER_WAVELENGTHS_NM))
 
         summary = _aggregate(summaries)
-        summary["sample_id"] = sample_id
+        summary["sample_id"] = _short(sample_id)
         write_results(path, row["row_number"], summary)
 
         status = summary["status"]
@@ -671,7 +682,7 @@ def main(argv=None) -> int:
 
     p_t = sub.add_parser("template", help="write a blank manifest")
     p_t.add_argument("path")
-    p_t.add_argument("--rows", type=int, default=25,
+    p_t.add_argument("--rows", type=int, default=250,
                      help="how many rows get the mode dropdown (default 25)")
 
     p_v = sub.add_parser("validate", help="check a manifest without scanning")

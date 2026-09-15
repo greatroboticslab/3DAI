@@ -108,14 +108,11 @@ def test_xlsx_template_round_trip():
         manifest.write_template(path)
         assert os.path.isfile(path)
         rows = manifest.read_manifest(path)
-        # The template ships exactly one clearly-marked example row.
-        assert len(rows) == 1
-        assert "EXAMPLE" in rows[0]["label"]
-        assert rows[0]["row_number"] == 2       # header is row 1
-        parsed = manifest.validate_row(rows[0], rows[0]["row_number"])
-        assert parsed["material_class"] == "wood"
-        assert parsed["laser_channels"] == [1, 2, 3, 4]   # blank = all four
-        assert parsed["surface"] == "matte" and parsed["transparency"] == "opaque"
+        assert rows == []                        # fresh template: headers + dropdowns only
+        from openpyxl import load_workbook
+        ws = load_workbook(path).active
+        assert [c.value for c in ws[1]] == manifest.ALL_COLUMNS
+        assert ws.column_dimensions["I"].width == 12   # sample_id fits a normal cell
     finally:
         os.path.isfile(path) and os.unlink(path)
 
@@ -183,9 +180,10 @@ def test_xlsx_write_back_targets_the_right_row():
         from openpyxl import load_workbook
         wb = load_workbook(path)
         ws = wb.active
-        second = {c: "" for c in manifest.ALL_COLUMNS}
-        second.update({"label": "second sample", "mode": "full"})
-        ws.append([second[c] for c in manifest.ALL_COLUMNS])   # row 3
+        for lab in ("first sample", "second sample"):          # rows 2 and 3
+            r = {c: "" for c in manifest.ALL_COLUMNS}
+            r.update({"label": lab, "mode": "full"})
+            ws.append([r[c] for c in manifest.ALL_COLUMNS])
         wb.save(path)
 
         manifest.write_results(path, 3, _RESULTS)
@@ -194,9 +192,7 @@ def test_xlsx_write_back_targets_the_right_row():
         by_label = {r["label"]: r for r in rows}
         assert by_label["second sample"]["scan_id"] == "scan-1"
         assert by_label["second sample"]["status"] == "complete"
-        # the example row on line 2 must be untouched
-        example = [r for r in rows if "EXAMPLE" in r["label"]][0]
-        assert not manifest._clean(example.get("scan_id"))
+        assert not manifest._clean(by_label["first sample"].get("scan_id"))   # untouched
     finally:
         os.path.isfile(path) and os.unlink(path)
 
@@ -296,7 +292,9 @@ def test_aggregate_multi_pose():
     agg = manifest._aggregate([_pose("complete", count=10), _pose("complete", count=10)])
     assert agg["status"] == "complete"
     assert agg["artifact_count"] == 20
-    assert agg["scan_id"] == "id-complete; id-complete"
+    # the sheet gets short ids (first SHORT_ID_LEN chars), one per pose
+    assert agg["scan_id"] == "id-compl; id-compl"
+    assert len(manifest._short("0123456789abcdef-uuid")) == manifest.SHORT_ID_LEN
 
     # one bad pose degrades the whole row so a re-run retries the object
     agg = manifest._aggregate([_pose("complete"), _pose("failed", detail="kinect died")])
