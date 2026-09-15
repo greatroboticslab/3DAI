@@ -245,6 +245,9 @@ def compute_features(laser_dir: str, channels=(1, 2, 3, 4)) -> Optional[dict[str
 FEATURE_COLUMNS = [
     "label", "material_class", "material_subclass", "surface", "transparency",
     "angle_index", "channel", "wavelength_nm", "ir_laser",
+    # False when the channel did not actually fire (e.g. the loose CH4 wire
+    # on 2026-09-15); the numbers on that row are blank, not measurements.
+    "valid",
     "core", "halo_r50", "halo_r10", "halo_energy_10_40", "speckle",
     "add_r", "add_g", "add_b", "flood", "flood_background", "saturated_core",
     "ir_core", "ir_halo_r50", "ir_halo_r10", "ir_halo_energy_10_40", "ir_speckle",
@@ -276,6 +279,7 @@ def feature_rows(sample: dict[str, Any], scan: dict[str, Any],
             "angle_index": (scan.get("angle") or {}).get("index"),
             "channel": ch, "wavelength_nm": wl,
             "ir_laser": bool(wl is not None and wl >= 750),
+            "valid": f.get("valid", True),
             "red_green_ratio": feats.get("red_green_ratio"),
             "red2_green_ratio": feats.get("red2_green_ratio"),
             "sample_id": sample.get("_id"), "scan_id": scan.get("_id"),

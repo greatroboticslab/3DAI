@@ -436,6 +436,14 @@ def _append_features_xlsx(path: str, rows, columns) -> None:
     wb = load_workbook(path)
     if FEATURES_SHEET in wb.sheetnames:
         ws = wb[FEATURES_SHEET]
+        # A tab written by an older column list keeps its order; columns
+        # added since go on the right so old rows are not shifted.
+        header = [_clean(c.value) for c in ws[1]]
+        for name in columns:
+            if name not in header:
+                ws.cell(row=1, column=len(header) + 1, value=name).font = Font(bold=True)
+                header.append(name)
+        columns = header
     else:
         ws = wb.create_sheet(FEATURES_SHEET)
         ws.append(columns)

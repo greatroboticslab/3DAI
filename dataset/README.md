@@ -1,10 +1,10 @@
 # 3DAI material dataset export
 
-Generated 2026-09-15 16:23 UTC by `python -m scanner_system.export_dataset`.
+Generated 2026-09-15 18:02 UTC by `python -m scanner_system.export_dataset`.
 Collection is in progress; this folder is re-exported and pushed as objects are scanned.
 
-- Objects: **5**  (scans: 13, images: 105)
-- Objects per material class: cardboard 1, foam 2, metal 1, plastic 1
+- Objects: **26**  (scans: 61, images: 773)
+- Objects per material class: cardboard 2, foam 4, metal 5, paper 2, plastic 13
 
 ## What is here
 
