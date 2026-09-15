@@ -59,6 +59,12 @@ class FakeCollection:
                 return
         # upsert not needed for these tests
 
+    def delete_one(self, query):
+        for i, d in enumerate(self._docs):
+            if self._match(d, query):
+                del self._docs[i]
+                return
+
     def create_index(self, keys):
         pass
 
