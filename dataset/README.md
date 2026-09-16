@@ -1,6 +1,6 @@
 # 3DAI material dataset export
 
-Generated 2026-09-15 18:26 UTC by `python -m scanner_system.export_dataset`.
+Generated 2026-09-16 17:03 UTC by `python -m scanner_system.export_dataset`.
 Collection is in progress; this folder is re-exported and pushed as objects are scanned.
 
 - Objects: **24**  (scans: 59, images: 763)
@@ -20,6 +20,10 @@ Collection is in progress; this folder is re-exported and pushed as objects are 
   `color` plain photo, `laser_dark` lasers off, `laser_ch1..4` each laser on,
   `*_ir` the Kinect infrared sensor for the same frame, `kinect_depth` Kinect depth,
   `fringe_white` projector white light, `height_map` reconstructed height.
+- `laser_zoom.jpg` in each scan folder: the readable laser view. One row per laser:
+  the raw spot zoomed 3x, the same window with the dark frame subtracted and the
+  faint scatter halo stretched up, and the radial intensity profile (log axis).
+  Rows marked INVALID are channels that did not fire for that scan.
 
 The images here are JPEG previews (longest side 800 px; infrared and
 depth frames stretched to 8-bit for viewing). The full-resolution PNGs, fringe

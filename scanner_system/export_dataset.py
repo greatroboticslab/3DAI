@@ -40,6 +40,7 @@ from . import scanner_db, schema
 from .capture import STORAGE_ROOT
 from .export_bundle import IMAGE_SUFFIXES, _metadata_xlsx_bytes, _slug
 from .laser_features import FEATURE_COLUMNS, feature_rows
+from .laser_zoom import make_laser_zoom
 
 # "materials" was the placeholder class of the July API smoke tests.
 EXCLUDED_CLASSES = frozenset({"demo", "test", "verification", "smoke", "materials"})
@@ -88,6 +89,7 @@ def export_folder(out_dir: str, db=None, storage_root: str = STORAGE_ROOT) -> di
     os.makedirs(images_dir, exist_ok=True)
 
     exported, missing = [], []
+    scan_out_dirs: dict[str, str] = {}
     counts: Counter = Counter()
     for row in rows:
         src_rel = row.get("file_path") or ""
@@ -110,15 +112,22 @@ def export_folder(out_dir: str, db=None, storage_root: str = STORAGE_ROOT) -> di
         write_preview(src, dst)
 
         exported.append(dict(row, bundle_path=rel, label=label))
+        scan_out_dirs[row.get("scan_id")] = os.path.dirname(dst)
         counts[("class", cls)] += 1
         counts[("modality", row.get("modality") or "?")] += 1
         counts[("pose", pose)] += 1
 
     feats = []
+    zooms = 0
     for sample in samples.values():
         for scan in scanner_db.scans_for_sample(sample["_id"], db=db):
             if scan["_id"] in complete_scans and scan.get("laser_features"):
                 feats.extend(feature_rows(sample, scan, schema.LASER_WAVELENGTHS_NM))
+                out_scan = scan_out_dirs.get(scan["_id"])
+                if out_scan and make_laser_zoom(
+                        os.path.join(storage_root, "scans", scan["_id"], "laser"),
+                        scan["laser_features"], os.path.join(out_scan, "laser_zoom.jpg")):
+                    zooms += 1
 
     with open(os.path.join(out_dir, "metadata.xlsx"), "wb") as fh:
         fh.write(_metadata_xlsx_bytes(exported, counts, missing, feats))
@@ -136,6 +145,7 @@ def export_folder(out_dir: str, db=None, storage_root: str = STORAGE_ROOT) -> di
         "objects": len(samples),
         "scans": len({r["scan_id"] for r in exported if r.get("scan_id")}),
         "images": len(exported),
+        "laser_zooms": zooms,
         "feature_rows": len(feats),
         "missing_on_disk": len(missing),
         "by_class": dict(sorted(by_class.items())),
@@ -170,6 +180,10 @@ def _write_readme(out_dir: str, s: dict[str, Any]) -> None:
         "  `color` plain photo, `laser_dark` lasers off, `laser_ch1..4` each laser on,",
         "  `*_ir` the Kinect infrared sensor for the same frame, `kinect_depth` Kinect depth,",
         "  `fringe_white` projector white light, `height_map` reconstructed height.",
+        "- `laser_zoom.jpg` in each scan folder: the readable laser view. One row per laser:",
+        "  the raw spot zoomed 3x, the same window with the dark frame subtracted and the",
+        "  faint scatter halo stretched up, and the radial intensity profile (log axis).",
+        "  Rows marked INVALID are channels that did not fire for that scan.",
         "",
         f"The images here are JPEG previews (longest side {PREVIEW_MAX_PX} px; infrared and",
         "depth frames stretched to 8-bit for viewing). The full-resolution PNGs, fringe",
