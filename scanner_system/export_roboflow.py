@@ -56,6 +56,8 @@ from .export_bundle import STORAGE_ROOT, _slug
 # both stay out unless explicitly asked for.
 DEFAULT_ROLES = (
     "laser_ch1_png", "laser_ch2_png", "laser_ch3_png", "laser_ch4_png",
+    # side camera (manual exposure) frames, present once that camera is fitted
+    "laser_cam_ch1_png", "laser_cam_ch2_png", "laser_cam_ch3_png", "laser_cam_ch4_png",
     "color_png", "fringe_white_png",
 )
 

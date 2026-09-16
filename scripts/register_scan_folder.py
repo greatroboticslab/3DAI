@@ -56,10 +56,15 @@ def role_for_file(path: Path, info: dict[str, Any]) -> tuple[str, str] | None:
         m = re.fullmatch(r"las(\d)(_ir)?\.png", name)
         if m:
             return "laser", f"laser_ch{m.group(1)}{'_ir' if m.group(2) else ''}_png"
+        m = re.fullmatch(r"cam_las(\d)\.png", name)
+        if m:
+            return "laser", f"laser_cam_ch{m.group(1)}_png"
         if name == "dark.png":
             return "laser", "laser_dark_png"
         if name == "dark_ir.png":
             return "laser", "laser_dark_ir_png"
+        if name == "cam_dark.png":
+            return "laser", "laser_cam_dark_png"
         if name in {"color.png", "color_png"} or name.startswith("color_"):
             return "kinect", "color_png"
         if name.startswith("depth_") or "depth" in name:

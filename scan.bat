@@ -6,6 +6,9 @@ REM 2) scans any objects already typed into collection.xlsx
 REM 3) then asks you for new objects, one at a time, and scans each one
 cd /d "%~dp0"
 set PY=%~dp0scanner_system\.venv\Scripts\python.exe
+REM Optional second camera for readable laser images (see SIDE_CAMERA.md):
+REM side_camera.cfg holds lines like SCANNER_LASER_CAM=1
+if exist side_camera.cfg for /f "usebackq eol=# tokens=1* delims==" %%a in ("side_camera.cfg") do set %%a=%%b
 "%PY%" -m scanner_system.preflight
 if errorlevel 1 (
   echo.

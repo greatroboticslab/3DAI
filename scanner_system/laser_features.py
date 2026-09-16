@@ -263,6 +263,19 @@ def compute_features(laser_dir: str, channels=(1, 2, 3, 4)) -> Optional[dict[str
             feats.update(_ir_channel(lit_ir, dark_ir))
         out["channels"][str(ch)] = feats
 
+    # Side camera (manual exposure): the same spot measurements on its
+    # frames, NOT gain-normalized because its exposure is fixed by hand and
+    # recorded under exposure["cam"]. Its numbers live in their own block so
+    # they are never mixed with the Kinect's.
+    cam_dark_path = os.path.join(laser_dir, "cam_dark.png")
+    if os.path.isfile(cam_dark_path):
+        cam_dark = _load_rgb(cam_dark_path)
+        out["cam_channels"] = {}
+        for ch in channels:
+            cp = os.path.join(laser_dir, f"cam_las{ch}.png")
+            if os.path.isfile(cp):
+                out["cam_channels"][str(ch)] = _color_channel(cp, cam_dark)
+
     chs = out["channels"]
     g = chs.get("4", {}).get("core") or 0.0
     out["red_green_ratio"] = round(chs["1"]["core"] / g, 3) if "1" in chs and g > 0 else None
@@ -284,6 +297,9 @@ FEATURE_COLUMNS = [
     "add_r", "add_g", "add_b", "flood", "flood_background", "saturated_core",
     # multiplier that brought this frame to GAIN_REF; 1.0 = captured at reference
     "gain_factor",
+    # the same measurements from the side camera (manual exposure), when fitted
+    "cam_core", "cam_halo_r50", "cam_halo_r10", "cam_speckle",
+    "cam_add_r", "cam_add_g", "cam_add_b", "cam_saturated_core",
     "ir_core", "ir_halo_r50", "ir_halo_r10", "ir_halo_energy_10_40", "ir_speckle",
     "ir_saturated_core",
     "red_green_ratio", "red2_green_ratio",
@@ -318,10 +334,13 @@ def feature_rows(sample: dict[str, Any], scan: dict[str, Any],
             "red2_green_ratio": feats.get("red2_green_ratio"),
             "sample_id": sample.get("_id"), "scan_id": scan.get("_id"),
         }
+        camf = (feats.get("cam_channels") or {}).get(ch_txt) or {}
         for k in FEATURE_COLUMNS:
             if k in f:
                 row[k] = f[k]
             elif k in fringe:
                 row[k] = fringe[k]
+            elif k.startswith("cam_") and k[4:] in camf:
+                row[k] = camf[k[4:]]
         rows.append({k: row.get(k) for k in FEATURE_COLUMNS})
     return rows

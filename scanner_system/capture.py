@@ -180,11 +180,22 @@ def _laser_sequence(scan_dir: str, channels: list[int], port: str) -> dict[str, 
     if not os.path.isfile(KINECT_PYTHON):
         return {"ok": False, "captured": {}, "errors": {},
                 "detail": f"Kinect interpreter not found at {KINECT_PYTHON}"}
+    cmd = [KINECT_PYTHON, _LASER_SEQ_SCRIPT, out_dir,
+           ",".join(str(c) for c in channels), "--port", port]
+    # Optional second camera with MANUAL exposure (Dr. Zhang's readable
+    # laser image): SCANNER_LASER_CAM is its UVC index; exposure/gain/size
+    # are passed through when set. Absent = Kinect only, as before.
+    cam = os.getenv("SCANNER_LASER_CAM", "").strip()
+    if cam:
+        cmd += ["--cam", cam]
+        for env, flag in (("SCANNER_LASER_CAM_EXPOSURE", "--cam-exposure"),
+                          ("SCANNER_LASER_CAM_GAIN", "--cam-gain"),
+                          ("SCANNER_LASER_CAM_SIZE", "--cam-size")):
+            val = os.getenv(env, "").strip()
+            if val:
+                cmd += [flag, val]
     try:
-        proc = subprocess.run(
-            [KINECT_PYTHON, _LASER_SEQ_SCRIPT, out_dir,
-             ",".join(str(c) for c in channels), "--port", port],
-            capture_output=True, text=True, timeout=90)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
     except subprocess.TimeoutExpired:
         return {"ok": False, "captured": {}, "errors": {},
                 "detail": "laser sequence timed out (90s)"}
@@ -414,6 +425,14 @@ def run_capture(
                     scan_id, sample_id, "laser", "laser_dark_ir_png",
                     _rel(p_ir), media_type="image/png",
                     size_bytes=os.path.getsize(p_ir), db=d)
+            # Side camera frames are not cropped either: its own optics and
+            # framing, and its manual exposure is the reason it exists.
+            if "cam_dark" in captured:
+                p_c = captured["cam_dark"]
+                scanner_db.register_artifact(
+                    scan_id, sample_id, "laser", "laser_cam_dark_png",
+                    _rel(p_c), media_type="image/png",
+                    size_bytes=os.path.getsize(p_c), db=d)
             # Kinect time-of-flight depth (uint16 mm, 512x424): metric 3D shape
             # independent of the projector calibration. Captured once per scan.
             if "depth" in captured:
@@ -448,6 +467,12 @@ def run_capture(
                         scan_id, sample_id, "laser", f"laser_ch{ch}_ir_png",
                         _rel(p_ir), media_type="image/png",
                         size_bytes=os.path.getsize(p_ir), laser_state=state, db=d)
+                if f"cam_ch{ch}" in captured:
+                    p_c = captured[f"cam_ch{ch}"]
+                    scanner_db.register_artifact(
+                        scan_id, sample_id, "laser", f"laser_cam_ch{ch}_png",
+                        _rel(p_c), media_type="image/png",
+                        size_bytes=os.path.getsize(p_c), laser_state=state, db=d)
             # Per-channel on/off intensity traces (Dr. Zhang's transient ask).
             if "transient" in captured:
                 p_t = captured["transient"]

@@ -36,3 +36,23 @@ def test_zoom_renders_all_channels_and_marks_invalid():
 
     with tempfile.TemporaryDirectory() as empty:
         assert laser_zoom.make_laser_zoom(empty, {"channels": {}}, os.path.join(empty, "x.jpg")) is None
+
+
+def test_zoom_adds_side_camera_rows_when_present():
+    with tempfile.TemporaryDirectory() as tmp:
+        _make_scan(tmp, sigma=6.0, amp=140.0)
+        h, w = 200, 300
+        import numpy as np
+        from PIL import Image
+        cam_dark = np.full((h, w, 3), 40, np.uint8)
+        Image.fromarray(cam_dark).save(os.path.join(tmp, "cam_dark.png"))
+        from scanner_system.test_laser_features import _gaussian_spot
+        add = _gaussian_spot(h, w, 100, 150, 10.0, 90.0).astype(np.float32)
+        Image.fromarray(np.clip(cam_dark + add[..., None], 0, 255).astype(np.uint8)).save(
+            os.path.join(tmp, "cam_las1.png"))
+        feats = lf.compute_features(tmp)
+        out = os.path.join(tmp, "z.jpg")
+        assert laser_zoom.make_laser_zoom(tmp, feats, out) == out
+        with Image.open(out) as im:
+            tile = 2 * laser_zoom.WINDOW * laser_zoom.SCALE
+            assert im.size[1] == 5 * (tile + 22)      # 4 Kinect rows + 1 side-camera row

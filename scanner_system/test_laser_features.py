@@ -162,3 +162,27 @@ def test_gain_normalization_makes_scans_comparable():
         f = lf.compute_features(tmp)
         assert f["normalization"]["applied"] is False
         assert f["channels"]["1"]["gain_factor"] == 1.0
+
+
+def test_side_camera_frames_get_their_own_feature_block():
+    """cam_dark/cam_las<N> (manual-exposure side camera) are measured like the
+    Kinect frames but kept in cam_channels, un-normalized, and flattened to
+    cam_* columns."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _make_scan(tmp, sigma=8.0, amp=120.0)
+        h, w = 200, 300
+        cam_dark = np.full((h, w, 3), 40, np.uint8)
+        _write_png(os.path.join(tmp, "cam_dark.png"), cam_dark)
+        add = _gaussian_spot(h, w, 90, 140, 12.0, 90.0).astype(np.float32)
+        _write_png(os.path.join(tmp, "cam_las1.png"),
+                   np.clip(cam_dark.astype(np.float32) + add[..., None], 0, 255).astype(np.uint8))
+        f = lf.compute_features(tmp)
+        assert set(f["cam_channels"]) == {"1"}
+        cam = f["cam_channels"]["1"]
+        assert cam["halo_r50"] > f["channels"]["1"]["halo_r50"]      # wider synthetic spot
+        assert cam["saturated_core"] == 0.0
+        rows = lf.feature_rows({"_id": "s", "label": "x"}, {"_id": "sc", "laser_features": f},
+                               {1: 635, 2: 635, 3: 940, 4: 530})
+        by_ch = {r["channel"]: r for r in rows}
+        assert by_ch[1]["cam_halo_r50"] == cam["halo_r50"] and by_ch[1]["cam_core"] == cam["core"]
+        assert by_ch[2]["cam_core"] is None                           # no cam frame for CH2

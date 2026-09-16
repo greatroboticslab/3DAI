@@ -143,6 +143,21 @@ def make_laser_zoom(laser_dir: str, features: dict[str, Any], out_path: str,
         name = (CHANNEL_NAMES.get(ch, f"CH{ch}") + f" [{source}]"
                 + ("" if valid else "   (INVALID: laser did not fire)"))
         rows.append((name, tiles, feat))
+
+        # Side camera with manual exposure, when the scan has it: the frame
+        # Dr. Zhang asked for, spot core unclipped and the object visible.
+        camf = (features.get("cam_channels") or {}).get(str(ch)) or {}
+        cam_lit, cam_dark_p = (os.path.join(laser_dir, f"cam_las{ch}.png"),
+                               os.path.join(laser_dir, "cam_dark.png"))
+        if camf.get("spot_x") is not None and os.path.isfile(cam_lit) and os.path.isfile(cam_dark_p):
+            ccy, ccx = float(camf["spot_y"]), float(camf["spot_x"])
+            c_lit_w = _window(_load(cam_lit), ccy, ccx)
+            c_diff_w = c_lit_w - _window(_load(cam_dark_p), ccy, ccx)
+            rows.append((CHANNEL_NAMES.get(ch, f"CH{ch}") + " [side camera, manual exposure]", [
+                Image.fromarray(np.clip(c_lit_w, 0, 255).astype(np.uint8)).resize((tile, tile), Image.NEAREST),
+                Image.fromarray(_stretch_halo(c_diff_w)).resize((tile, tile), Image.NEAREST),
+                Image.fromarray(_profile_tile(c_diff_w, tile)),
+            ], camf))
     if not rows:
         return None
 

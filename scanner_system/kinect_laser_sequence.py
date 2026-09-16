@@ -114,6 +114,64 @@ def _wait_frame(k, timeout=12.0):
     return False
 
 
+class SideCam:
+    """Optional second camera (any UVC device: a webcam, or a 4K camera
+    behind an HDMI capture stick) grabbed right after each Kinect frame.
+
+    Unlike the Kinect it takes a MANUAL exposure, which is the whole point:
+    the laser spot can be exposed so its core does not clip and the
+    object stays visible. Exposure is the DirectShow log2-seconds scale
+    (-8 = 1/256 s); a capture stick ignores it and uses the camera body's
+    own manual setting. Any failure leaves ``ok`` False and the sequence
+    carries on with the Kinect alone.
+    """
+
+    def __init__(self, index, size=None, exposure=None, gain=None):
+        self.ok = False
+        self.state = {}
+        try:
+            self.cap = cv2.VideoCapture(int(index), cv2.CAP_DSHOW)
+            if not self.cap.isOpened():
+                return
+            if size:
+                w, h = (int(v) for v in size.lower().split("x"))
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+            if exposure is not None:
+                self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)   # DSHOW: manual
+                self.cap.set(cv2.CAP_PROP_EXPOSURE, float(exposure))
+            if gain is not None:
+                self.cap.set(cv2.CAP_PROP_GAIN, float(gain))
+            for _ in range(6):            # flush frames taken under old settings
+                self.cap.read()
+            self.state = {
+                "index": int(index),
+                "width": int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                "height": int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                "auto_exposure": self.cap.get(cv2.CAP_PROP_AUTO_EXPOSURE),
+                "exposure": self.cap.get(cv2.CAP_PROP_EXPOSURE),
+                "gain": self.cap.get(cv2.CAP_PROP_GAIN),
+            }
+            self.ok = True
+        except Exception as exc:          # a missing camera must not stop a scan
+            self.state = {"error": f"{type(exc).__name__}: {exc}"}
+
+    def grab(self):
+        if not self.ok:
+            return None
+        for _ in range(2):                # drop buffered frames from before the laser edge
+            self.cap.grab()
+        okf, frame = self.cap.read()
+        return frame if okf else None
+
+    def release(self):
+        if getattr(self, "cap", None) is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir")
@@ -125,6 +183,12 @@ def main(argv=None) -> int:
                     help="seconds of intensity trace to record across each on/off edge")
     ap.add_argument("--roi", default="0.12,0.05,0.65,0.72",
                     help="crop fractions x0,y0,x1,y1 for the transient trace")
+    ap.add_argument("--cam", type=int, default=None,
+                    help="UVC index of a second camera to grab alongside the Kinect")
+    ap.add_argument("--cam-size", default=None, help="e.g. 1920x1080 (default: device default)")
+    ap.add_argument("--cam-exposure", type=float, default=None,
+                    help="manual exposure, DirectShow log2 seconds (e.g. -8)")
+    ap.add_argument("--cam-gain", type=float, default=None)
     args = ap.parse_args(argv)
 
     channels = [int(c) for c in args.channels.split(",") if c.strip()]
@@ -151,6 +215,10 @@ def main(argv=None) -> int:
         PyKinectV2.FrameSourceTypes_Color | PyKinectV2.FrameSourceTypes_Depth
         | PyKinectV2.FrameSourceTypes_Infrared)
     exposure_log = {}
+    cam = SideCam(args.cam, args.cam_size, args.cam_exposure, args.cam_gain) if args.cam is not None else None
+    if cam is not None:
+        exposure_log["cam"] = dict(cam.state, ok=cam.ok)
+        print("OK cam" if cam.ok else f"WARN cam {args.cam} not available: {cam.state}")
     try:
         time.sleep(1.5)
         if not _wait_frame(k):
@@ -179,6 +247,12 @@ def main(argv=None) -> int:
         cv2.imwrite(dark_path, dark)
         exposure_log["dark"] = {"exposure_100ns": e, "gain": g}
         print(f"OK dark {dark_path}")
+        if cam is not None and cam.ok:
+            cf = cam.grab()
+            if cf is not None:
+                cpath = os.path.join(args.out_dir, "cam_dark.png")
+                cv2.imwrite(cpath, cf)
+                print(f"OK cam_dark {cpath}")
         ir = _grab_ir(k)
         if ir is not None:
             ir_path = os.path.join(args.out_dir, "dark_ir.png")
@@ -196,6 +270,7 @@ def main(argv=None) -> int:
             time.sleep(max(0.0, args.settle - 0.1))
             lit, e, g = _grab(k)
             ir = _grab_ir(k)             # same lit moment, infrared sensor
+            cf = cam.grab() if (cam is not None and cam.ok) else None
             # OFF edge
             off0 = time.perf_counter()
             rc.set_channel(ch, False)
@@ -213,12 +288,18 @@ def main(argv=None) -> int:
                 ir_path = os.path.join(args.out_dir, f"las{ch}_ir.png")
                 cv2.imwrite(ir_path, ir)
                 print(f"OK ch{ch}_ir {ir_path}")
+            if cf is not None:
+                cpath = os.path.join(args.out_dir, f"cam_las{ch}.png")
+                cv2.imwrite(cpath, cf)
+                print(f"OK cam_ch{ch} {cpath}")
     finally:
         try:
             rc.safe_all()
         finally:
             rc.disconnect()
             k.close()
+            if cam is not None:
+                cam.release()
         with open(os.path.join(args.out_dir, "exposure.json"), "w") as f:
             json.dump(exposure_log, f, indent=2)
         if transient:
