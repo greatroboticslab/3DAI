@@ -26,7 +26,7 @@ from typing import Any, Optional
 import numpy as np
 
 WINDOW = 120          # half-size of the zoom window in source pixels
-SCALE = 3             # upscale factor for the tiles
+SCALE = 2             # upscale factor for the tiles (3 made ~1 MB files; 400 scans would be 400 MB)
 GAMMA = 0.45          # < 1 lifts the faint halo
 CHANNEL_NAMES = {1: "CH1 red 635 nm", 2: "CH2 red 635 nm", 3: "CH3 NIR 940 nm", 4: "CH4 green 530 nm"}
 
@@ -161,5 +161,5 @@ def make_laser_zoom(laser_dir: str, features: dict[str, Any], out_path: str,
         for j, cap in enumerate(("lit (raw, zoom x3)", "lit minus dark, halo stretched", "radial profile")):
             d.text((j * tile + 6, y + label_h + 4), cap, fill=(255, 255, 255))
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    canvas.save(out_path, "JPEG", quality=88)
+    canvas.save(out_path, "JPEG", quality=82)
     return out_path
