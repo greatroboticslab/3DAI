@@ -71,7 +71,9 @@ def _scan_roi() -> tuple[float, float, float, float]:
             return x0, y0, x1, y1
         except Exception:
             pass
-    return 0.12, 0.05, 0.65, 0.72
+    # GEOMETRY_ID kinect_lowered_20260916: the projected zone in the lowered
+    # Kinect's frame, with a small margin (measured 2026-09-16 from a live frame).
+    return 0.07, 0.01, 0.64, 0.70
 
 
 def _crop_to_roi(path: str) -> Optional[int]:
@@ -98,6 +100,10 @@ def _crop_to_roi(path: str) -> Optional[int]:
 # standalone grab script under that interpreter. Override the interpreter path
 # with SCANNER_KINECT_PYTHON if it lives elsewhere.
 KINECT_PYTHON = os.getenv("SCANNER_KINECT_PYTHON", "").strip() or r"C:\KinectEnv\Scripts\python.exe"
+# Physical rig layout in effect. 2026-09-16: Kinect lowered toward the table
+# at Dr. Zhang's request (bigger laser spot in frame); new crop box and fringe
+# reference ref20_20260916 go with it.
+GEOMETRY_ID = "kinect_lowered_20260916"
 _GRAB_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kinect_grab_once.py")
 _PROJECT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_solid.py")
 
@@ -206,7 +212,7 @@ def _reference_dir(repo_root: str) -> str:
     """Empty-stage fringe reference in effect (see _reconstruct_height)."""
     calib_dir = os.path.join(repo_root, "data", "scan_test", "calib_new")
     return os.getenv("SCANNER_FRINGE_REFERENCE",
-                     os.path.join(calib_dir, "ref20_20260905"))
+                     os.path.join(calib_dir, "ref20_20260916"))
 
 
 def _calibration_file(repo_root: str) -> str:
@@ -239,15 +245,15 @@ def _reconstruct_height(scan_id, sample_id, fringe_dir, repo_root, d):
     import subprocess
 
     calib_dir = os.path.join(repo_root, "data", "scan_test", "calib_new")
-    # ref20_20260905: empty-stage reference captured 2026-09-05 under the
-    # CURRENT geometry (Kinect repositioned, projector re-tilted); footprint
-    # x 326-1124, y 111-659, verified identical to the live zone. The old
-    # ref20 covered the pre-move zone, so height maps could only reconstruct
-    # the overlap. Note the per-pixel gain map pairs with the OLD reference
-    # and now correctly skips itself (footprint mismatch), so reconstruction
-    # falls back to the global curve until the Lego recalibration.
+    # ref20_20260916: empty-stage reference captured 2026-09-16 after the
+    # Kinect was lowered (GEOMETRY_ID). Earlier references (ref20_20260905,
+    # ref20) belong to earlier geometries; a reference from the wrong
+    # geometry makes the footprint check fail and the height map garbage.
+    # The per-pixel gain map pairs with the July reference and skips itself
+    # (footprint mismatch), so reconstruction uses the global curve, which
+    # itself needs re-fitting from flat calipered anchors in this geometry.
     ref_dir = os.getenv("SCANNER_FRINGE_REFERENCE",
-                        os.path.join(calib_dir, "ref20_20260905"))
+                        os.path.join(calib_dir, "ref20_20260916"))
     calib_txt = os.getenv("SCANNER_HEIGHT_CALIB",
                           os.path.join(calib_dir, "calibration_temporal_20260731.txt"))
     recon_script = os.path.join(repo_root, "data", "scan_test", "reconstruct_height.py")
@@ -341,8 +347,15 @@ def run_capture(
     # later analysis cannot tell scan #40 from scan #140 after a bump.
     _repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     scanner_db.set_scan_meta(scan_id, {"capture_config": {
+        # Bumped whenever the Kinect, projector or lasers physically move:
+        # pixel-scale features (halo radii) and the fringe reference are only
+        # comparable within one geometry.
+        "geometry": os.getenv("SCANNER_GEOMETRY_ID", GEOMETRY_ID),
         "reference_dir": os.path.basename(_reference_dir(_repo)),
         "calibration_file": os.path.basename(_calibration_file(_repo)),
+        # The phase-to-height curve was fitted for the July geometry; until
+        # flat calipered anchors re-fit it, metric heights are approximate.
+        "height_calibration_geometry": "kinect_july_2026",
         "scan_roi": list(_scan_roi()),
         "projector_maxval": int(os.getenv("SCANNER_PROJECTOR_MAXVAL", "20")),
         "wavelengths_nm": {str(k): v for k, v in schema.LASER_WAVELENGTHS_NM.items()},
@@ -355,12 +368,16 @@ def run_capture(
     wants_kinect_plain = mode in ("full", "kinect_projector", "kinect_only")
     wants_projector = mode in ("full", "kinect_projector", "projector_only")
 
-    # ── Laser modality: capture the sample under each laser ─────────────────
-    if wants_laser:
-        # Projector to BLACK for the whole laser stage so the lasers are the only
-        # light on the sample (its normal image otherwise washes the scene out).
+    # Projector to BLACK for the laser stage AND the plain photo. Without the
+    # hold the projector shows the Windows desktop between stages, and the
+    # 2026-09-15 plain photos all carry the wallpaper projected onto the object.
+    projector = None
+    if wants_laser or wants_kinect_plain:
         projector = _start_projector_black()
         time.sleep(0.8)  # let the black window come up before firing
+
+    # ── Laser modality: capture the sample under each laser ─────────────────
+    if wants_laser:
         try:
             p = port or hardware.likely_esp32_port()
             if p is None:
@@ -466,8 +483,6 @@ def run_capture(
                         detail=f"{type(exc).__name__}: {exc}"[:300], db=d)
         except Exception as exc:
             scanner_db.record_instrument(scan_id, "laser", "failed", detail=str(exc), db=d)
-        finally:
-            _stop_projector(projector)  # restore the projector
     elif mode in ("full", "laser_only"):
         scanner_db.record_instrument(scan_id, "laser", "skipped",
                                      detail="no laser channels selected", db=d)
@@ -485,6 +500,7 @@ def run_capture(
         else:
             scanner_db.record_instrument(scan_id, "kinect", "failed",
                                          detail=grab["detail"], db=d)
+    _stop_projector(projector)  # fringe stage drives the projector itself
 
     # ── Projector / fringe: structured-light 3D stage ───────────────────────
     # Projects a multi-frequency fringe sequence and captures each with the
