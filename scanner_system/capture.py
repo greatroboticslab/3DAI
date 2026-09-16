@@ -71,9 +71,10 @@ def _scan_roi() -> tuple[float, float, float, float]:
             return x0, y0, x1, y1
         except Exception:
             pass
-    # GEOMETRY_ID kinect_lowered_20260916: the projected zone in the lowered
-    # Kinect's frame, with a small margin (measured 2026-09-16 from a live frame).
-    return 0.07, 0.01, 0.64, 0.70
+    # GEOMETRY_ID kinect_mid_20260916: the projected zone in the frame with a
+    # small margin (measured 2026-09-16 from a live frame; footprint of
+    # ref20_20260916b is the authority if these ever disagree).
+    return 0.17, 0.10, 0.63, 0.67
 
 
 def _crop_to_roi(path: str) -> Optional[int]:
@@ -100,10 +101,12 @@ def _crop_to_roi(path: str) -> Optional[int]:
 # standalone grab script under that interpreter. Override the interpreter path
 # with SCANNER_KINECT_PYTHON if it lives elsewhere.
 KINECT_PYTHON = os.getenv("SCANNER_KINECT_PYTHON", "").strip() or r"C:\KinectEnv\Scripts\python.exe"
-# Physical rig layout in effect. 2026-09-16: Kinect lowered toward the table
-# at Dr. Zhang's request (bigger laser spot in frame); new crop box and fringe
-# reference ref20_20260916 go with it.
-GEOMETRY_ID = "kinect_lowered_20260916"
+# Physical rig layout in effect. 2026-09-16: Kinect first lowered toward the
+# table at Dr. Zhang's request (bigger laser spot in frame), then raised part
+# way back the same morning; the crop box and fringe reference
+# ref20_20260916b go with this final position. Bump this id whenever the
+# Kinect, projector or lasers move.
+GEOMETRY_ID = "kinect_mid_20260916"
 _GRAB_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kinect_grab_once.py")
 _PROJECT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_solid.py")
 
@@ -212,7 +215,7 @@ def _reference_dir(repo_root: str) -> str:
     """Empty-stage fringe reference in effect (see _reconstruct_height)."""
     calib_dir = os.path.join(repo_root, "data", "scan_test", "calib_new")
     return os.getenv("SCANNER_FRINGE_REFERENCE",
-                     os.path.join(calib_dir, "ref20_20260916"))
+                     os.path.join(calib_dir, "ref20_20260916b"))
 
 
 def _calibration_file(repo_root: str) -> str:
@@ -245,15 +248,15 @@ def _reconstruct_height(scan_id, sample_id, fringe_dir, repo_root, d):
     import subprocess
 
     calib_dir = os.path.join(repo_root, "data", "scan_test", "calib_new")
-    # ref20_20260916: empty-stage reference captured 2026-09-16 after the
-    # Kinect was lowered (GEOMETRY_ID). Earlier references (ref20_20260905,
-    # ref20) belong to earlier geometries; a reference from the wrong
+    # ref20_20260916b: empty-stage reference captured 2026-09-16 at the
+    # Kinect's final height (GEOMETRY_ID). Earlier references (ref20_20260916,
+    # ref20_20260905, ref20) belong to earlier geometries; one from the wrong
     # geometry makes the footprint check fail and the height map garbage.
     # The per-pixel gain map pairs with the July reference and skips itself
     # (footprint mismatch), so reconstruction uses the global curve, which
     # itself needs re-fitting from flat calipered anchors in this geometry.
     ref_dir = os.getenv("SCANNER_FRINGE_REFERENCE",
-                        os.path.join(calib_dir, "ref20_20260916"))
+                        os.path.join(calib_dir, "ref20_20260916b"))
     calib_txt = os.getenv("SCANNER_HEIGHT_CALIB",
                           os.path.join(calib_dir, "calibration_temporal_20260731.txt"))
     recon_script = os.path.join(repo_root, "data", "scan_test", "reconstruct_height.py")
