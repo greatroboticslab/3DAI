@@ -158,7 +158,7 @@ def make_laser_zoom(laser_dir: str, features: dict[str, Any], out_path: str,
         d.text((6, y + 4), info, fill=(230, 230, 230))
         for j, t in enumerate(tiles):
             canvas.paste(t, (j * tile, y + label_h))
-        for j, cap in enumerate(("lit (raw, zoom x3)", "lit minus dark, halo stretched", "radial profile")):
+        for j, cap in enumerate((f"lit (raw, zoom x{SCALE})", "lit minus dark, halo stretched", "radial profile")):
             d.text((j * tile + 6, y + label_h + 4), cap, fill=(255, 255, 255))
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     canvas.save(out_path, "JPEG", quality=82)
