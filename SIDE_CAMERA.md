@@ -15,14 +15,29 @@ measured into `cam_*` columns of `laser_features.csv`, and shown as extra
 rows in each scan's `laser_zoom.jpg`. If the camera is missing or fails, the
 scan continues with the Kinect alone; nothing else changes.
 
+## What the camera must be able to do (measured 2026-09-19)
+
+The laser spot core is at least 7x, probably far more, over an 8-bit
+sensor's ceiling at any exposure where the object is still visible, and the
+scatter halo around it is 1-2% of the core. Both in one frame needs a
+dynamic range of a few thousand to one. Consequences for the purchase:
+
+- **8-bit video (any HDMI capture stick, any webcam) cannot do it.** Manual
+  exposure on an 8-bit feed only chooses which part clips: core or halo.
+- What works: **12-bit or deeper stills** (RAW / high-bit-depth capture over
+  USB tethering or a machine-vision camera such as a Basler/FLIR/Arducam
+  USB3 module with 10-12-bit output, ~$100-300), or an 8-bit camera driven
+  in an **exposure bracket** (one short frame for the core, one long frame
+  for the halo and object, per laser). The bracket is the cheap route and
+  the software can be extended to grab two exposures per laser.
+
 ## Hooking it up
 
-1. Connect it so Windows sees it as a video device:
-   - a USB webcam-style camera: plug in;
-   - a 4K camera with HDMI out: HDMI into a USB capture stick (any "HDMI to
-     USB video capture" dongle, ~$20; Elgato Cam Link if buying nice).
-     Set the camera body to **manual exposure** (fixed shutter, fixed ISO,
-     manual white balance) and to output a clean HDMI feed with no overlays.
+1. Connect it so Windows sees it as a video device (a UVC camera or
+   machine-vision module with manual exposure), or as a tethered stills
+   camera if it delivers RAW. Set it to **manual exposure** (fixed shutter,
+   fixed ISO/gain, manual white balance). For a 4K consumer camera, an HDMI
+   capture stick will let you look at the spot but not measure it; see above.
 2. Find its index and check it:
 
        scanner_system\.venv\Scripts\python.exe -m scanner_system.side_camera --list

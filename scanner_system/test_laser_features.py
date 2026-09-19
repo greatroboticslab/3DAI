@@ -186,3 +186,26 @@ def test_side_camera_frames_get_their_own_feature_block():
         by_ch = {r["channel"]: r for r in rows}
         assert by_ch[1]["cam_halo_r50"] == cam["halo_r50"] and by_ch[1]["cam_core"] == cam["core"]
         assert by_ch[2]["cam_core"] is None                           # no cam frame for CH2
+
+
+def test_small_exposure_step_between_frames_is_not_a_flood():
+    """A 3% exposure difference between the dark and lit frames plus a sensor
+    black-level offset must not become a whole-frame offset after scaling
+    (the lights-on bench test at 11 ms / gain 1 produced exactly that)."""
+    import json
+    with tempfile.TemporaryDirectory() as tmp:
+        h, w = 200, 300
+        offset = 30.0                                   # black level, both frames
+        scene = np.full((h, w, 3), 100.0, np.float32)   # room-lit table
+        spot = _gaussian_spot(h, w, 100, 150, 8.0, 120.0).astype(np.float32)[..., None]
+        _write_png(os.path.join(tmp, "dark.png"), np.clip(scene + offset, 0, 255).astype(np.uint8))
+        # lit frame: 3% shorter exposure -> scene 3% dimmer, plus the spot
+        _write_png(os.path.join(tmp, "las1.png"),
+                   np.clip(scene * 0.97 + offset + spot, 0, 255).astype(np.uint8))
+        with open(os.path.join(tmp, "exposure.json"), "w") as fh:
+            json.dump({"dark": {"exposure_100ns": 116000, "gain": 1.0},
+                       "ch1": {"exposure_100ns": 113000, "gain": 1.0}}, fh)
+        f = lf.compute_features(tmp, channels=(1,))["channels"]["1"]
+        assert f["flood"] is False and f["lit_fraction"] < 0.05   # the spot itself, not a flood
+        assert f["halo_r50"] is not None and 6 <= f["halo_r50"] <= 12
+        assert f["gain_factor"] > 20                    # large multiplier, still sane

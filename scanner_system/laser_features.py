@@ -165,9 +165,17 @@ def _norm_factor(state: Optional[dict[str, Any]]) -> float:
 
 
 def _color_channel(lit_path: str, dark: np.ndarray, lit_factor: float = 1.0) -> dict[str, Any]:
+    """``dark`` is the RAW dark frame. The difference is taken in raw counts
+    and then scaled once by the lit frame's factor: dark and lit come from
+    one camera session and share a state to within a few percent, and a raw
+    difference cancels the sensor's black-level offset. Scaling each frame
+    separately (the first version) turned a 3% exposure step between frames
+    into a whole-frame offset of tens of counts once the multiplier was large
+    (a lights-on test at 11 ms, gain 1: multiplier 23, fake "flood" on every
+    channel). A large state mismatch is a QC problem, not a normalization one.
+    """
     raw = _load_rgb(lit_path)
-    lit = raw * lit_factor
-    diff = lit - dark
+    diff = (raw - dark) * lit_factor
     mag = diff.mean(axis=2)
     cy, cx = _spot_center(mag)
     core, r50, r10, energy = _radial(mag, cy, cx)
@@ -244,7 +252,7 @@ def compute_features(laser_dir: str, channels=(1, 2, 3, 4)) -> Optional[dict[str
             exposure = json.load(fh)
     except Exception:
         exposure = {}
-    dark = _load_rgb(dark_path) * _norm_factor(exposure.get("dark"))
+    dark = _load_rgb(dark_path)          # raw; see _color_channel
     dark_ir_path = os.path.join(laser_dir, "dark_ir.png")
     dark_ir = _load_ir(dark_ir_path) if os.path.isfile(dark_ir_path) else None
 
