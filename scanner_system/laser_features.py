@@ -132,6 +132,72 @@ def _radial(mag: np.ndarray, cy: float, cx: float) -> tuple[float, int, int, flo
     return core, int(r50), int(r10), energy
 
 
+# Clipping-immune scatter features. The spot core on this rig is >=7x over
+# the 8-bit ceiling on light objects (measured 2026-09-19), so anything that
+# references the peak (core, r50, r10, energy_10_40) is biased. These read
+# only the ring from TAIL_R0 to TAIL_R1 px, outside the clipped disc, where
+# the surface's scattering shows as how fast the light falls off with radius.
+TAIL_R0, TAIL_R1 = 12, 40
+
+
+def _tail_features(diff: np.ndarray, mag: np.ndarray, raw: np.ndarray,
+                   cy: float, cx: float) -> dict[str, Any]:
+    h, w = mag.shape
+    yy, xx = np.ogrid[:h, :w]
+    rr = np.hypot(yy - cy, xx - cx)
+    far = rr > 150
+    bg_noise = float(mag[far].std()) if far.any() else 0.0
+
+    near = rr <= RMAX
+    clipped = (raw.max(axis=2) >= 250) & near
+    clip_radius = float(rr[clipped].max()) if clipped.any() else 0.0
+
+    ann = (rr >= TAIL_R0) & (rr <= TAIL_R1)
+    ann_mean = float(mag[ann].mean()) if ann.any() else None
+    ann_rgb = ([float(diff[:, :, i][ann].mean()) for i in range(3)]
+               if ann.any() else [None, None, None])
+
+    # Ring means above the noise floor, then a log-linear fit: the slope is
+    # the scatter fall-off, its negative reciprocal an e-folding length in px.
+    floor = max(2.0 * bg_noise, 1.0)
+    radii, vals = [], []
+    ri = np.rint(rr).astype(int)
+    for r in range(TAIL_R0, TAIL_R1 + 1):
+        ring = ri == r
+        if ring.any():
+            v = float(mag[ring].mean())
+            if v > floor:
+                radii.append(r)
+                vals.append(v)
+    slope = efold = None
+    if len(radii) >= 8:
+        slope = float(np.polyfit(radii, np.log(vals), 1)[0])
+        if slope < 0:
+            efold = -1.0 / slope
+
+    # Speckle in the ring with the radial fall-off divided out, so it measures
+    # granularity of the scattered light, not the gradient of the spot.
+    ann_speckle = None
+    if radii:
+        prof = dict(zip(radii, vals))
+        sel = ann & np.isin(ri, radii)
+        if sel.sum() > 50:
+            expected = np.vectorize(prof.get)(ri[sel]).astype(np.float32)
+            ann_speckle = float((mag[sel] / expected).std())
+
+    return {
+        "clip_radius": round(clip_radius, 1),
+        "tail_slope": None if slope is None else round(slope, 4),
+        "tail_efold_px": None if efold is None else round(efold, 1),
+        "annulus_mean": None if ann_mean is None else round(ann_mean, 2),
+        "annulus_r": None if ann_rgb[0] is None else round(ann_rgb[0], 2),
+        "annulus_g": None if ann_rgb[1] is None else round(ann_rgb[1], 2),
+        "annulus_b": None if ann_rgb[2] is None else round(ann_rgb[2], 2),
+        "annulus_speckle": None if ann_speckle is None else round(ann_speckle, 3),
+        "bg_noise": round(bg_noise, 2),
+    }
+
+
 def _speckle(mag: np.ndarray, cy: float, cx: float) -> float:
     y, x = int(cy), int(cx)
     patch = mag[max(0, y - PATCH):y + PATCH, max(0, x - PATCH):x + PATCH]
@@ -198,8 +264,10 @@ def _color_channel(lit_path: str, dark: np.ndarray, lit_factor: float = 1.0) -> 
     # object), so it is reported only for flood channels.
     far = np.hypot(yy - cy, xx - cx) > 150
     flood_bg = float(mag[far].mean()) if (flood and far.any()) else None
+    tail = _tail_features(diff, mag, raw, cy, cx)
 
     return {
+        **tail,
         "flood_background": None if flood_bg is None else round(flood_bg, 2),
         "spot_x": round(cx, 1), "spot_y": round(cy, 1),
         "core": round(core, 2),
@@ -303,6 +371,9 @@ FEATURE_COLUMNS = [
     "valid",
     "core", "halo_r50", "halo_r10", "halo_energy_10_40", "speckle",
     "add_r", "add_g", "add_b", "flood", "flood_background", "saturated_core",
+    # clipping-immune scatter features, read in the 12-40 px ring only
+    "clip_radius", "tail_slope", "tail_efold_px", "annulus_mean",
+    "annulus_r", "annulus_g", "annulus_b", "annulus_speckle", "bg_noise",
     # multiplier that brought this frame to GAIN_REF; 1.0 = captured at reference
     "gain_factor",
     # the same measurements from the side camera (manual exposure), when fitted
@@ -312,7 +383,8 @@ FEATURE_COLUMNS = [
     "ir_saturated_core",
     "red_green_ratio", "red2_green_ratio",
     # per-scan projector/fringe features (same value on every channel row)
-    "fringe_contrast_object", "fringe_contrast_background", "fringe_contrast_ratio",
+    "fringe_contrast_object", "fringe_contrast_object_std",
+    "fringe_contrast_background", "fringe_contrast_ratio",
     "fringe_albedo_object", "fringe_albedo_background", "fringe_reliable_fraction",
     "fringe_object_px",
     "sample_id", "scan_id",

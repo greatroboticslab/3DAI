@@ -54,6 +54,22 @@ def recompute(since: str = "", db=None, storage_root: str = STORAGE_ROOT) -> dic
             feats["red_green_ratio"] = None
             feats["red2_green_ratio"] = None
         scanner_db.set_laser_features(scan["_id"], feats, db=d)
+
+        # Fringe features against the reference the scan was captured with
+        # (recorded in capture_config; a reference from another geometry
+        # would be wrong, so scans without the record keep what they have).
+        ref_name = (scan.get("capture_config") or {}).get("reference_dir")
+        fringe_dir = os.path.join(storage_root, "scans", scan["_id"], "fringe")
+        if ref_name and os.path.isfile(os.path.join(fringe_dir, "scan.npz")):
+            from .fringe_features import compute_fringe_features
+            repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            ref_dir = os.path.join(repo, "data", "scan_test", "calib_new", ref_name)
+            try:
+                ff = compute_fringe_features(fringe_dir, ref_dir)
+            except Exception:
+                ff = None
+            if ff:
+                scanner_db.set_scan_meta(scan["_id"], {"fringe_features": ff}, db=d)
         done += 1
     return {"recomputed": done, "skipped_no_frames": skipped}
 

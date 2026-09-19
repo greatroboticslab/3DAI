@@ -76,8 +76,13 @@ def compute_fringe_features(fringe_dir: str, reference_dir: str) -> Optional[dic
         return float(a[mask].mean()) if mask.any() else None
 
     c_obj, c_bg = _m(con, obj_mask), _m(con, background)
+    # Spread of the contrast over the object: texture / mixed finish shows as
+    # a wide spread, a uniform surface as a narrow one. Independent of the
+    # laser spot and of the clipped core.
+    c_obj_std = float(np.std(con[obj_mask])) if obj_mask.sum() > 50 else None
     return {
         "fringe_contrast_object": None if c_obj is None else round(c_obj, 2),
+        "fringe_contrast_object_std": None if c_obj_std is None else round(c_obj_std, 2),
         "fringe_contrast_background": None if c_bg is None else round(c_bg, 2),
         "fringe_contrast_ratio": (round(c_obj / c_bg, 3)
                                   if c_obj is not None and c_bg else None),

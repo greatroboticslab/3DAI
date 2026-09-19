@@ -209,3 +209,29 @@ def test_small_exposure_step_between_frames_is_not_a_flood():
         assert f["flood"] is False and f["lit_fraction"] < 0.05   # the spot itself, not a flood
         assert f["halo_r50"] is not None and 6 <= f["halo_r50"] <= 12
         assert f["gain_factor"] > 20                    # large multiplier, still sane
+
+
+def test_tail_features_ignore_the_clipped_core():
+    """Two spots with the same clipped core but different scatter widths must
+    differ in the ring features; the clipped disc itself is reported."""
+    def scan(tmp, sigma):
+        h, w = 260, 340
+        dark = np.full((h, w, 3), 40, np.uint8)
+        _write_png(os.path.join(tmp, "dark.png"), dark)
+        with open(os.path.join(tmp, "exposure.json"), "w") as fh:
+            fh.write("{}")
+        add = _gaussian_spot(h, w, 130, 170, sigma, 2000.0)     # way over 255: clipped core
+        lit = np.clip(dark.astype(np.float32) + add[..., None], 0, 255).astype(np.uint8)
+        _write_png(os.path.join(tmp, "las1.png"), lit)
+        return lf.compute_features(tmp, channels=(1,))["channels"]["1"]
+
+    with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+        narrow, wide = scan(a, 6.0), scan(b, 14.0)
+        assert narrow["saturated_core"] == 1.0 and wide["saturated_core"] == 1.0
+        assert narrow["clip_radius"] > 0 and wide["clip_radius"] > narrow["clip_radius"]
+        assert wide["annulus_mean"] > narrow["annulus_mean"]          # more light in the ring
+        assert wide["tail_efold_px"] is not None and narrow["tail_efold_px"] is not None
+        assert wide["tail_efold_px"] > narrow["tail_efold_px"]        # slower fall-off
+        assert narrow["bg_noise"] < 1.0                                # clean synthetic frame
+        for k in ("annulus_r", "annulus_g", "annulus_b", "annulus_speckle"):
+            assert wide[k] is not None
