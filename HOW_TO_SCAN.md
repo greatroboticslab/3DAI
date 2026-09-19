@@ -15,6 +15,16 @@ A black window opens and checks the machine. If every line says `[OK]`, keep
 going. If it says `STOP`, it tells you what to plug in. Fix it and
 double-click `scan.bat` again.
 
+Next it does a **laser self-test**: with the projector on and the room dark,
+press Enter and it fires each laser once to confirm they all light. If one
+says `NO SPOT`, a wire is loose; fix it before scanning. (Press `s` to skip.)
+
+After every pose it runs a **quality check** and prints the result. If it
+finds a problem (a laser that did not fire, the room lights on, the camera
+exposure still moving, an object not on the table), it asks whether to redo
+that pose. Press Enter to redo it right away, `k` to keep it anyway, or `s`
+to skip. Good scans just say `QC: all checks passed` and move on.
+
 Then it asks you questions, one object at a time:
 
 ```

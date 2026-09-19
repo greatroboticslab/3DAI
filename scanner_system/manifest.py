@@ -649,7 +649,7 @@ def _scan_row(path: str, row: dict[str, Any], prompt: bool, db=None) -> dict[str
 
     Returns the aggregated summary that was written to the sheet.
     """
-    from . import capture, scanner_db
+    from . import capture, qc, scanner_db
 
     label = row["label"]
     sample_id = row["sample_id"]
@@ -687,19 +687,41 @@ def _scan_row(path: str, row: dict[str, Any], prompt: bool, db=None) -> dict[str
                   "then press Enter: ")
         if n_angles > 1:
             print(f"    pose {k}/{n_angles}...")
-        pkg = capture.run_capture(
-            sample_id=sample_id,
-            mode=row["mode"],
-            laser_channels=row["laser_channels"],
-            operator=row["operator"],
-            angle={"index": k, "count": n_angles} if n_angles > 1 else None,
-            notes=row["notes"],
-            # The caliper height describes the object as placed for pose 1;
-            # a rotated object has a different height, so later poses are
-            # dataset-only, never anchors.
-            known_height_mm=row["known_height_mm"] if k == 1 else None,
-            db=db,
-        )
+
+        # Capture, quality-check, and (in prompt mode) offer to redo the pose
+        # while the object is still on the table. Every incident this week
+        # produced valid-looking data; qc.check reads it back before we move on.
+        while True:
+            pkg = capture.run_capture(
+                sample_id=sample_id,
+                mode=row["mode"],
+                laser_channels=row["laser_channels"],
+                operator=row["operator"],
+                angle={"index": k, "count": n_angles} if n_angles > 1 else None,
+                notes=row["notes"],
+                # The caliper height describes the object as placed for pose 1;
+                # a rotated object has a different height, so later poses are
+                # dataset-only, never anchors.
+                known_height_mm=row["known_height_mm"] if k == 1 else None,
+                db=db,
+            )
+            verdict = qc.check(pkg, row["laser_channels"])
+            print(qc.format_verdict(verdict))
+            if not (prompt and verdict["redo"]):
+                break
+            ans = input("    >>> QC flagged a problem. Redo this pose? "
+                        "[Enter = redo, k = keep it, s = skip/stop]: ").strip().lower()
+            if ans in ("k", "keep", "s", "skip", "stop"):
+                break
+            # Redo: retire the rejected attempt so it never reaches the dataset
+            # (exports take only complete scans), then capture again.
+            bad_id = pkg.get("_id")
+            if bad_id:
+                scanner_db.set_scan_meta(bad_id, {
+                    "status": "superseded",
+                    "notes": ((pkg.get("notes") or "") + "; superseded: QC redo").strip("; "),
+                }, db=db)
+
         summaries.append(_summarize(pkg))
 
         # The measured laser features land on their own tab right away,

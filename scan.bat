@@ -16,6 +16,15 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
+REM Laser self-test: fires each laser once and confirms it lit (catches a
+REM loose wire before any object is scanned). Answer 's' to skip.
+"%PY%" -m scanner_system.selftest
+if errorlevel 1 (
+  echo.
+  echo A laser did not light. Fix it, or press a key to scan anyway.
+  pause
+)
+echo.
 "%PY%" -m scanner_system.manifest run collection.xlsx --prompt --add
 echo.
 echo Finished. Everything is saved in collection.xlsx and the database.
