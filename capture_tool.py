@@ -27,7 +27,7 @@ for _stream in (sys.stdout, sys.stderr):
     _stream.reconfigure(encoding="utf-8")
 
 # Point directly to your Cloudflare tunnel hub on Project A
-API = "https://collect-educated-combine-figured.trycloudflare.com"
+API = "https://trycloudflare.com"
 IMAGE_ROOT = os.getenv("IMAGE_ROOT", "./data/images")
 API_TIMEOUT = float(os.getenv("API_TIMEOUT_S", "15"))
 API_TOKEN_HEADER = os.getenv("API_TOKEN_HEADER", "X-API-Token").strip() or "X-API-Token"
@@ -104,7 +104,8 @@ def kinect_capture(session_id: str, step_index: int, frame_timeout: float = 15.0
     if color is None and kinect.has_new_color_frame():
       cf = kinect.get_last_color_frame()
       h, w = kinect.color_frame_desc.Height, kinect.color_frame_desc.Width
-      color = cf.reshape((h, w, 4))
+      # UPDATED LINE: Added standard data-type conversion to protect cv2.imwrite from exceptions
+      color = cf.reshape((h, w, 4)).astype(np.uint8)
     if depth is None and kinect.has_new_depth_frame():
       df = kinect.get_last_depth_frame()
       h, w = kinect.depth_frame_desc.Height, kinect.depth_frame_desc.Width
@@ -238,36 +239,56 @@ def run_session(total_steps: int = 10, real: bool = False) -> None:
 
   try:
     for idx in range(total_steps):
-      print(f"Step {idx + 1}/{total_steps}")
-      step_file_paths = capture_fn(session_id, idx)
-      for path in step_file_paths:
-        print(f"  captured  → {path}")
-        captured_paths.append(path)
+      step_index = idx + 1
+      print(f"  [Step {step_index}/{total_steps}] Capturing frame...")
+      paths = capture_fn(session_id, step_index)
+      captured_paths.extend(paths)
+
+    print(f"\n[Success] All {total_steps} capture steps completed locally.")
+
+  except Exception as e:
+    print(f"\n[Error] Capture sequence encountered a failure: {e}")
+    raise e
+
   finally:
+    # Always guarantee the Kinect hardware stream closes to free up the USB controller
     if real:
+      print("  Closing Kinect hardware connection...")
       _close_kinect()
 
-  print(f"\n{'=' * 40}")
-  print("Local capture finished successfully.")
-  sync_to_project_a(material, object_name, surface, height_mm, captured_paths)
-  print(f"{'=' * 40}")
+  # 3. Synchronize all collected metadata and images to Project A
+  if captured_paths:
+    print(f"\nInitiating sync to Project A hub ({len(captured_paths)} files)...")
+    sync_to_project_a(
+        material=material,
+        object_name=object_name,
+        surface=surface,
+        height_mm=height_mm,
+        image_paths=captured_paths,
+    )
+  else:
+    print("\n[Warning] No frames were captured. Skipping sync step.")
 
-
-# ─────────────────────────── Entry Point ───────────────────────────────
 
 if __name__ == "__main__":
-  parser = argparse.ArgumentParser(description="Run a capture session")
+  parser = argparse.ArgumentParser(
+      description="Local capture session sync utility for Project A backend."
+  )
   parser.add_argument(
-      "--steps", type=int, default=10, help="Number of capture steps (default: 10)"
+      "--steps",
+      type=int,
+      default=10,
+      help="Total capture iterations per session (default: 10)",
   )
   parser.add_argument(
       "--real",
       action="store_true",
-      help=(
-          "Capture from the real Kinect (requires C:\\KinectEnv and a connected"
-          " sensor). Without it, fake images."
-      ),
+      help="Fire up physical Kinect V2 hardware rather than saving placeholder arrays",
   )
+
   args = parser.parse_args()
 
-  run_session(total_steps=args.steps, real=args.real)
+  try:
+    run_session(total_steps=args.steps, real=args.real)
+  except KeyboardInterrupt:
+    print("\n\n[Aborted] Scan sequence canceled by operator terminal signal.")
