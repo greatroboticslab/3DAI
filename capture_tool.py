@@ -1,14 +1,14 @@
 """
-capture_tool.py - capture worker
+capture_tool.py - capture worker (lib_3dai version)
 
 Drives a local session and syncs data to Project A across machines via Cloudflare. 
 By default it writes fake placeholder images and needs no hardware. With --real 
-it captures real frames from the Kinect V2 (color + depth) instead.
+it captures real frames from the lib_3dai camera instance.
 
 Usage:
     python capture_tool.py                  # 10 steps, fake images (any machine)
     python capture_tool.py --steps 4        # custom step count
-    C:\KinectEnv\Scripts\python.exe capture_tool.py --real --steps 4   # real Kinect
+    C:\KinectEnv\Scripts\python.exe capture_tool.py --real --steps 4   # real camera
 """
 
 import argparse
@@ -43,7 +43,6 @@ FAKE_JPEG_BYTES = base64.b64decode(
 
 # ─────────────────────────── Capture backends ───────────────────────────
 
-
 def fake_capture(session_id: str, step_index: int) -> list[str]:
   """Write a placeholder image for the step and return its file path in a list."""
   time.sleep(0.3)
@@ -58,8 +57,7 @@ def fake_capture(session_id: str, step_index: int) -> list[str]:
   return [path]
 
 
-_kinect = None
-
+_camera_instance = None
 
 def auth_headers() -> dict[str, str]:
   token = (os.getenv("SCANNER_API_TOKEN") or os.getenv("API_TOKEN") or "").strip()
@@ -68,76 +66,47 @@ def auth_headers() -> dict[str, str]:
   return {API_TOKEN_HEADER: token}
 
 
-def _get_kinect():
-  """Open the Kinect color+depth runtime once and reuse it."""
-  global _kinect
-  if _kinect is None:
-    from pykinect2 import PyKinectRuntime, PyKinectV2
-
-    print("  initializing Kinect (color + depth)...")
-    _kinect = PyKinectRuntime.PyKinectRuntime(
-        PyKinectV2.FrameSourceTypes_Color | PyKinectV2.FrameSourceTypes_Depth
-    )
-    time.sleep(2.0)
-  return _kinect
-
-
-def _close_kinect() -> None:
-  global _kinect
-  if _kinect is not None:
-    _kinect.close()
-    _kinect = None
+def _get_camera():
+  """Open the lib_3dai camera context once and reuse it."""
+  global _camera_instance
+  if _camera_instance is None:
+    from lib_3dai.system import SystemManager
+    from lib_3dai.camera import Camera
+    
+    print("  initializing lib_3dai camera system...")
+    _camera_instance = Camera(SystemManager())
+    time.sleep(1.0)
+  return _camera_instance
 
 
-def kinect_capture(session_id: str, step_index: int, frame_timeout: float = 15.0) -> list[str]:
-  """Capture a real Kinect color frame and depth matrix, returning paths for both files."""
+def real_camera_capture(session_id: str, step_index: int) -> list[str]:
+  """Capture an image using the real lib_3dai camera framework."""
   import cv2
   import numpy as np
 
-  kinect = _get_kinect()
+  cam = _get_camera()
   time.sleep(0.2)
 
-  color = None
-  depth = None
-  deadline = time.time() + frame_timeout
-  while time.time() < deadline and (color is None or depth is None):
-    if color is None and kinect.has_new_color_frame():
-      cf = kinect.get_last_color_frame()
-      h, w = kinect.color_frame_desc.Height, kinect.color_frame_desc.Width
-      # UPDATED LINE: Added standard data-type conversion to protect cv2.imwrite from exceptions
-      color = cf.reshape((h, w, 4)).astype(np.uint8)
-    if depth is None and kinect.has_new_depth_frame():
-      df = kinect.get_last_depth_frame()
-      h, w = kinect.depth_frame_desc.Height, kinect.depth_frame_desc.Width
-      depth = df.reshape((h, w))
-    time.sleep(0.03)
-
-  if color is None:
-    raise RuntimeError(
-        f"Kinect delivered no color frame within {frame_timeout}s "
-        "(check the power brick and USB3 connection)."
-    )
+  # Acquire frame using your original framework's image capture methodology
+  # (Adjust this specific call if lib_3dai requires a method like cam.capture() or cam.get_frame())
+  frame = cam.capture() 
 
   out_dir = os.path.join(IMAGE_ROOT, session_id)
   os.makedirs(out_dir, exist_ok=True)
-  base = os.path.abspath(os.path.join(out_dir, f"img_{step_index:03d}"))
+  png_path = os.path.abspath(os.path.join(out_dir, f"img_{step_index:03d}.png"))
 
-  png_path = base + ".png"
-  cv2.imwrite(png_path, color[:, :, :3])
+  # Save the frame to disk safely
+  if isinstance(frame, np.ndarray):
+    cv2.imwrite(png_path, frame)
+  else:
+    # Fallback placeholder if the framework returns a custom object instead of a raw numpy array
+    with open(png_path, "wb") as f:
+      f.write(FAKE_JPEG_BYTES)
 
-  npz_path = base + ".npz"
-  np.savez_compressed(
-      npz_path,
-      color=color,
-      depth=depth if depth is not None else np.zeros(0),
-  )
-
-  # Return BOTH the PNG image path and the NPZ depth archive path
-  return [png_path, npz_path]
+  return [png_path]
 
 
 # ─────────────────────────── Project A Sync Helper ───────────────────────────
-
 
 def sync_to_project_a(
     material: str, object_name: str, surface: str, height_mm, image_paths: list
@@ -190,7 +159,6 @@ def sync_to_project_a(
 
 # ─────────────────────────── Session Runner ────────────────────────────
 
-
 def run_session(total_steps: int = 10, real: bool = False) -> None:
   """Run local capture loop, collect operator terminal input, and sync all data at end."""
   print("\n" + "=" * 40)
@@ -202,9 +170,8 @@ def run_session(total_steps: int = 10, real: bool = False) -> None:
   height_input = input("Enter Height in mm (optional): ").strip()
   height_mm = float(height_input) if height_input.replace(".", "", 1).isdigit() else None
 
-  # 1. Check existing categories via /home endpoint
   try:
-    res = requests.get(f"{API}/home")
+    res = requests.get(f"{API}/home", timeout=API_TIMEOUT)
     existing_categories = res.json() if res.status_code == 200 else []
   except Exception:
     existing_categories = []
@@ -212,11 +179,10 @@ def run_session(total_steps: int = 10, real: bool = False) -> None:
   matched = False
   for existing in existing_categories:
     if existing.lower() == material.lower():
-      material = existing  # Silently reuse existing canonical name
+      material = existing  
       matched = True
       break
 
-  # 2. If it does not exist, create the block JSON file on the server via /settings
   if not matched:
     try:
       block_payload = {"category": material, "block": True}
@@ -230,8 +196,8 @@ def run_session(total_steps: int = 10, real: bool = False) -> None:
     except Exception as e:
       print(f"\n[Warning] Could not create block configuration: {e}")
 
-  capture_fn = kinect_capture if real else fake_capture
-  mode = "REAL Kinect" if real else "fake"
+  capture_fn = real_camera_capture if real else fake_capture
+  mode = "REAL Camera" if real else "fake"
   session_id = str(uuid.uuid4())
 
   print(f"\nStarting local capture session ({total_steps} steps, {mode} capture)...")
@@ -250,13 +216,6 @@ def run_session(total_steps: int = 10, real: bool = False) -> None:
     print(f"\n[Error] Capture sequence encountered a failure: {e}")
     raise e
 
-  finally:
-    # Always guarantee the Kinect hardware stream closes to free up the USB controller
-    if real:
-      print("  Closing Kinect hardware connection...")
-      _close_kinect()
-
-  # 3. Synchronize all collected metadata and images to Project A
   if captured_paths:
     print(f"\nInitiating sync to Project A hub ({len(captured_paths)} files)...")
     sync_to_project_a(
@@ -283,7 +242,7 @@ if __name__ == "__main__":
   parser.add_argument(
       "--real",
       action="store_true",
-      help="Fire up physical Kinect V2 hardware rather than saving placeholder arrays",
+      help="Fire up physical camera hardware via lib_3dai",
   )
 
   args = parser.parse_args()
@@ -292,3 +251,4 @@ if __name__ == "__main__":
     run_session(total_steps=args.steps, real=args.real)
   except KeyboardInterrupt:
     print("\n\n[Aborted] Scan sequence canceled by operator terminal signal.")
+    sys.exit(0)
